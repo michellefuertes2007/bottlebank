@@ -193,8 +193,8 @@ $logs = $conn->query("SELECT * FROM stock_log WHERE user_id=$uid ORDER BY date_l
 <tr>
 <td><?= $l['log_id'] ?></td>
 <td><?= htmlspecialchars($l['action_type']) ?></td>
-<td><?= htmlspecialchars($l['customer_name']) ?></td>
-<td><?= htmlspecialchars($l['bottle_type']) ?></td>
+<td><?= htmlspecialchars($l['customer_name'] ?? '') ?></td>
+<td><?= htmlspecialchars($l['bottle_type'] ?? '') ?></td>
 <td><?= $l['quantity'] ?></td>
 <td><?= $l['amount'] ?></td>
 <td><?= date("M d, Y — h:i A", strtotime($l['date_logged'])) ?></td>

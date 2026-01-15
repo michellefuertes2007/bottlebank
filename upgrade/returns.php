@@ -21,7 +21,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
     $stmt->bind_param('sisi', $user_id, $customer_name, $bottle_type, $quantity);
     if ($stmt->execute()) {
       // log
-      $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity) VALUES (?, 'Return', ?, ?, ?)");
+      $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, details) VALUES (?, 'Return', ?, ?, ?, 'Successfully recorded')");
       $log->bind_param('issi', $user_id, $customer_name, $bottle_type, $quantity);
       $log->execute(); $log->close();
       $msg = 'Return recorded!';
@@ -83,7 +83,26 @@ function confirmSubmit(e){
 </script>
 </head>
 <body>
- <div class="app">
+
+<!-- Sidebar -->
+<div class="sidebar">
+    <div class="brand">
+        <h1>BottleBank</h1>
+    </div>
+    <nav class="sidebar-nav">
+        <a href="index.php">🏠 Dashboard</a>
+        <a href="deposit.php">💰 Deposit</a>
+        <a href="returns.php" class="active">🔁 Returns</a>
+        <a href="refund.php">💸 Refund</a>
+        <a href="stock_log.php">📦 Stock Log</a>
+        <?php if($is_admin): ?>
+        <a href="admin/admin_panel.php">⚙️ Admin Panel</a>
+        <?php endif; ?>
+        <a href="logout.php" class="logout">🚪 Logout</a>
+    </nav>
+</div>
+
+<div class="app">
   <div class="topbar">
   <div class="brand"><div class="logo">BB</div><div><h1>Return</h1><p class="kv">Add new Return</p></div></div>
   <div class="menu-wrap"><a href="index.php" class="kv">← Back to Dashboard</a></div>
@@ -117,5 +136,6 @@ function confirmSubmit(e){
   <button type="submit">Submit</button>
 </form>
 <?php endif; ?>
+</div>
 </body>
 </html>

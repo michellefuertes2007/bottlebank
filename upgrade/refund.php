@@ -26,7 +26,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
         $stmt->bind_param('isd', $user_id, $cust_name, $amount);
         if ($stmt->execute()) {
             // log the refund
-            $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, amount) VALUES (?, 'Refund', ?, ?)");
+            $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, amount, details) VALUES (?, 'Refund', ?, ?, 'Successfully recorded')");
             $log->bind_param('isd', $user_id, $cust_name, $amount);
             $log->execute();
             $log->close();
@@ -87,6 +87,25 @@ function confirmRefund(e){
 </script>
 </head>
 <body>
+
+<!-- Sidebar -->
+<div class="sidebar">
+    <div class="brand">
+        <h1>BottleBank</h1>
+    </div>
+    <nav class="sidebar-nav">
+        <a href="index.php">🏠 Dashboard</a>
+        <a href="deposit.php">💰 Deposit</a>
+        <a href="returns.php">🔁 Returns</a>
+        <a href="refund.php" class="active">💸 Refund</a>
+        <a href="stock_log.php">📦 Stock Log</a>
+        <?php if($is_admin): ?>
+        <a href="admin/admin_panel.php">⚙️ Admin Panel</a>
+        <?php endif; ?>
+        <a href="logout.php" class="logout">🚪 Logout</a>
+    </nav>
+</div>
+
   <div class="app">
   <div class="topbar">
   <div class="brand"><div class="logo">BB</div><div><h1>Refund</h1><p class="kv">Add new Refund</p></div></div>

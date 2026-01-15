@@ -4,6 +4,7 @@ session_start();
 if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit(); }
 
 $user_id = (int)$_SESSION['user_id'];
+$is_admin = (isset($_SESSION['role']) && $_SESSION['role'] === 'admin');
 
 // Pagination and filtering params
 $page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
@@ -80,6 +81,25 @@ $result = $stmt->get_result();
     </style>
 </head>
 <body>
+
+<!-- Sidebar -->
+<div class="sidebar">
+    <div class="brand">
+        <h1>BottleBank</h1>
+    </div>
+    <nav class="sidebar-nav">
+        <a href="index.php">🏠 Dashboard</a>
+        <a href="deposit.php">💰 Deposit</a>
+        <a href="returns.php">🔁 Returns</a>
+        <a href="refund.php">💸 Refund</a>
+        <a href="stock_log.php" class="active">📦 Stock Log</a>
+        <?php if($is_admin): ?>
+        <a href="admin/admin_panel.php">⚙️ Admin Panel</a>
+        <?php endif; ?>
+        <a href="logout.php" class="logout">🚪 Logout</a>
+    </nav>
+</div>
+
 <div class="app">
   <div class="topbar">
     <div class="brand"><div class="logo">BB</div><div><h1>Stock Log</h1></div></div>
@@ -151,10 +171,10 @@ $result = $stmt->get_result();
             <tr>
                 <td><?= htmlspecialchars($row['log_id']) ?></td>
                 <td><?= htmlspecialchars($row['action_type']) ?></td>
-                <td><?= htmlspecialchars($row['customer_name']) ?></td>
-                <td><?= htmlspecialchars($row['bottle_type']) ?></td>
-                <td><?= htmlspecialchars($row['quantity']) ?></td>
-                <td><?= htmlspecialchars($row['amount']) ?></td>
+                <td><?= htmlspecialchars(!empty($row['customer_name']) ? $row['customer_name'] : 'N/A') ?></td>
+                <td><?= htmlspecialchars(!empty($row['bottle_type']) ? $row['bottle_type'] : 'N/A') ?></td>
+                <td><?= htmlspecialchars(!empty($row['quantity']) ? $row['quantity'] : 'N/A') ?></td>
+                <td><?= htmlspecialchars(!empty($row['amount']) ? $row['amount'] : 'N/A') ?></td>
                 <td><?= htmlspecialchars($row['date_logged']) ?></td>
             </tr>
         <?php endwhile; else: ?>

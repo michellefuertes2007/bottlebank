@@ -101,6 +101,7 @@ CREATE TABLE `stock_log` (
   `bottle_type` varchar(50) DEFAULT NULL,
   `quantity` int(11) DEFAULT NULL,
   `amount` decimal(10,2) DEFAULT NULL,
+  `details` varchar(255) DEFAULT 'Successfully recorded',
   `date_logged` datetime DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -108,11 +109,11 @@ CREATE TABLE `stock_log` (
 -- Dumping data for table `stock_log`
 --
 
-INSERT INTO `stock_log` (`log_id`, `user_id`, `action_type`, `customer_name`, `bottle_type`, `quantity`, `amount`, `date_logged`) VALUES
-(9, 10, 'Deposit', 'Sikret', 'Glass Bottle', 2, 3.00, '2026-01-12 11:58:33'),
-(10, 10, 'Deposit', 'christian bayot', 'Plastic Bottle (PET)', 5, 0.00, '2026-01-12 11:59:39'),
-(11, 10, 'Refund', NULL, NULL, NULL, 200.00, '2026-01-12 12:00:10'),
-(12, 10, 'Return', 'christian bayot', 'Plastic Bottle (PET)', 5, NULL, '2026-01-12 12:05:31');
+INSERT INTO `stock_log` (`log_id`, `user_id`, `action_type`, `customer_name`, `bottle_type`, `quantity`, `amount`, `details`, `date_logged`) VALUES
+(9, 10, 'Deposit', 'Sikret', 'Glass Bottle', 2, 3.00, 'Successfully recorded', '2026-01-12 11:58:33'),
+(10, 10, 'Deposit', 'christian bayot', 'Plastic Bottle (PET)', 5, 0.00, 'Successfully recorded', '2026-01-12 11:59:39'),
+(11, 10, 'Refund', NULL, NULL, NULL, 200.00, 'Successfully recorded', '2026-01-12 12:00:10'),
+(12, 10, 'Return', 'christian bayot', 'Plastic Bottle (PET)', 5, NULL, 'Successfully recorded', '2026-01-12 12:05:31');
 
 -- --------------------------------------------------------
 
@@ -244,6 +245,17 @@ ALTER TABLE `returns`
 --
 ALTER TABLE `stock_log`
   ADD CONSTRAINT `stock_log_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `user` (`user_id`) ON DELETE CASCADE;
+
+--
+-- Update blank details in stock_log to 'Successfully recorded'
+--
+UPDATE `stock_log` SET `details` = 'Successfully recorded' WHERE `details` IS NULL OR `details` = '';
+
+--
+-- Alter table to ensure details column exists with proper default
+--
+ALTER TABLE `stock_log` MODIFY `details` varchar(255) DEFAULT 'Successfully recorded';
+
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

@@ -44,8 +44,69 @@ body {
     margin:0;
     background: #f0f7f7;
     color: #333;
+    display: flex;
 }
-.app { max-width:1200px; margin:0 auto; padding:20px; }
+
+/* Sidebar */
+.sidebar {
+    width: 250px;
+    background: linear-gradient(135deg, #2d6a6a 0%, #1e4a4a 100%);
+    color: white;
+    padding: 30px 0;
+    min-height: 100vh;
+    box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+    position: fixed;
+    left: 0;
+    top: 0;
+}
+.sidebar .brand {
+    padding: 0 20px;
+    margin-bottom: 40px;
+    border-bottom: 2px solid rgba(255,255,255,0.1);
+    padding-bottom: 20px;
+}
+.sidebar .brand h1 {
+    margin: 0;
+    font-size: 24px;
+    color: white;
+}
+.sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.sidebar-nav a {
+    display: flex;
+    align-items: center;
+    padding: 15px 20px;
+    color: white;
+    text-decoration: none;
+    transition: 0.3s;
+    font-weight: 500;
+}
+.sidebar-nav a:hover {
+    background: rgba(255,255,255,0.1);
+    border-left: 4px solid #80cbc4;
+    padding-left: 16px;
+}
+.sidebar-nav a.active {
+    background: rgba(128,203,196,0.2);
+    border-left: 4px solid #80cbc4;
+    padding-left: 16px;
+}
+.sidebar-nav .logout {
+    margin-top: auto;
+    border-top: 2px solid rgba(255,255,255,0.1);
+    padding-top: 20px;
+    margin-left: 0;
+    margin-right: 0;
+}
+
+.app { 
+    margin-left: 250px;
+    padding: 20px;
+    flex: 1;
+}
 
 /* Topbar */
 .topbar {
@@ -60,26 +121,7 @@ body {
 }
 .brand h1 { margin:0; color:#2d6a6a; }
 .brand p { margin:0; color:#6c7a89; font-size:14px; }
-.menu-wrap { position: relative; }
-.menu-btn { background:#2d6a6a; color:white; border:none; padding:10px 16px; border-radius:8px; cursor:pointer; font-weight:600; }
-.menu-panel {
-    display:none;
-    position:absolute;
-    right:0;
-    top:50px;
-    background:white;
-    border-radius:12px;
-    box-shadow:0 4px 15px rgba(0,0,0,0.1);
-    overflow:hidden;
-}
-.menu-panel a {
-    display:block;
-    padding:12px 20px;
-    color:#333;
-    text-decoration:none;
-    transition:0.2s;
-}
-.menu-panel a:hover { background:#e0f2f1; color:#00796b; }
+.menu-wrap { display: flex; align-items: center; gap: 15px; }
 
 /* Dashboard Cards */
 .grid {
@@ -139,26 +181,33 @@ body {
 </style>
 </head>
 <body>
+<!-- Sidebar -->
+<div class="sidebar">
+    <div class="brand">
+        <h1>BottleBank</h1>
+    </div>
+    <nav class="sidebar-nav">
+        <a href="index.php" class="active">🏠 Dashboard</a>
+        <a href="deposit.php">💰 Deposit</a>
+        <a href="returns.php">🔁 Returns</a>
+        <a href="refund.php">💸 Refund</a>
+        <a href="stock_log.php">📦 Stock Log</a>
+        <?php if($is_admin): ?>
+        <a href="admin/admin_panel.php">⚙️ Admin Panel</a>
+        <?php endif; ?>
+        <a href="logout.php" class="logout">🚪 Logout</a>
+    </nav>
+</div>
+
 <div class="app">
 
     <!-- Topbar -->
     <div class="topbar">
         <div class="brand">
-            <h1>BottleBank</h1>
+            <h1>Dashboard</h1>
         </div>
         <div class="menu-wrap">
             <span>Signed in as <strong><?= $username ?></strong></span>
-            <button class="menu-btn" onclick="toggleMenu()">Menu</button>
-            <div class="menu-panel" id="menuPanel">
-                <a href="deposit.php">➕ Deposit</a>
-                <a href="returns.php">🔁 Return</a>
-                <a href="refund.php">💸 Refund</a>
-                <a href="stock_log.php">📦 Stock Log</a>
-                <?php if ($is_admin): ?>
-                <a href="admin/admin_panel.php">⚙️ Admin Panel</a>
-                <?php endif; ?>
-                <a href="logout.php" style="color:#d64545">⎋ Logout</a>
-            </div>
         </div>
     </div>
 
@@ -215,7 +264,7 @@ body {
                 <?php while($row=$result->fetch_assoc()): 
                     $type = htmlspecialchars($row['type']);
                     $date = date("M d, Y — h:i A", strtotime($row['date']));
-                    $details = htmlspecialchars($row['details']);
+                    $details = htmlspecialchars(!empty($row['details']) ? $row['details'] : 'N/A');
                     $icon = match($type) {
                         'Deposit'=>'💰','Return'=>'🔁','Refund'=>'💸','Stock Log'=>'📦', default=>'📋'
                     };
@@ -239,29 +288,9 @@ body {
         </div>
     </div>
 
-    <!-- Quick Actions -->
-    <div class="quick-actions">
-        <a href="deposit.php"><button class="primary">➕ New Deposit</button></a>
-        <a href="returns.php"><button class="ghost">🔁 Log Return</button></a>
-        <a href="refund.php"><button class="ghost">💸 Issue Refund</button></a>
-    </div>
-
     <!-- Footer -->
     <div class="footer">© <?=date('Y')?> BottleBank — Built with care</div>
 </div>
 
-<script>
-function toggleMenu(){
-    const panel = document.getElementById('menuPanel');
-    if(panel.style.display==='block'){ panel.style.display='none'; }
-    else { panel.style.display='block'; }
-}
-document.addEventListener('click', function(e){
-    const panel = document.getElementById('menuPanel');
-    const btn = document.querySelector('.menu-btn');
-    if(!panel) return;
-    if(!panel.contains(e.target) && !btn.contains(e.target)) panel.style.display='none';
-});
-</script>
 </body>
 </html>

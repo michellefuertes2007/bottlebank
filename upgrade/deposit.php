@@ -93,6 +93,24 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
   <link rel="stylesheet" href="asset/style.css">
 </head>
 <body>
+
+<!-- Sidebar -->
+<div class="sidebar">
+    <div class="brand">
+        <h1>BottleBank</h1>
+    </div>
+    <nav class="sidebar-nav">
+        <a href="index.php">🏠 Dashboard</a>
+        <a href="deposit.php" class="active">💰 Deposit</a>
+        <a href="returns.php">🔁 Returns</a>
+        <a href="refund.php">💸 Refund</a>
+        <a href="stock_log.php">📦 Stock Log</a>
+        <?php if($is_admin): ?>
+        <a href="admin/admin_panel.php">⚙️ Admin Panel</a>
+        <?php endif; ?>
+        <a href="logout.php" class="logout">🚪 Logout</a>
+    </nav>
+</div>
   
 <div class="app">
   <div class="topbar">
@@ -198,12 +216,6 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
           </tbody>
         </table>
       </div>
-    </div>
-
-    <div class="side" style="grid-column: span 4;">
-      <h4 style="margin-top:0">Quick Info</h4>
-      <p class="hint">Deposits are logged and added to your Stock Log automatically.</p>
-      <p class="kv">Logged in as <? $username = htmlspecialchars($_SESSION['username'])?><strong> <?$username?> </strong></p>
     </div>
   </div>
 
