@@ -50,59 +50,74 @@ if ($res) {
 }
 $stmt->close();
 
-$total_pages = max(1, (int)ceil($total / $per_page));
+// Calc pages
+$total_pages = ($total > 0) ? ceil($total / $per_page) : 1;
 if ($page > $total_pages) $page = $total_pages;
-$offset = ($page - 1) * $per_page;
 
-// Fetch page rows
-$data_sql = "SELECT log_id, action_type, customer_name, bottle_type, quantity, amount, date_logged FROM stock_log " . $where_sql . " ORDER BY date_logged DESC LIMIT ? OFFSET ?";
+// Get records with pagination
+$offset = ($page - 1) * $per_page;
+$data_sql = "SELECT log_id, action_type, customer_name, bottle_type, quantity, amount, date_logged FROM stock_log " . $where_sql . " ORDER BY date_logged DESC LIMIT ?, ?";
 $stmt = $conn->prepare($data_sql);
-// extend types and params for limit/offset
-$types2 = $types . 'ii';
-$params2 = $params;
-$params2[] = $per_page;
-$params2[] = $offset;
-$stmt->bind_param($types2, ...$params2);
+
+// Bind with offset and limit
+$types_with_limit = $types . 'ii';
+$offset_param = $offset;
+$limit_param = $per_page;
+$all_params = array_merge($params, [$offset_param, $limit_param]);
+
+$stmt->bind_param($types_with_limit, ...$all_params);
 $stmt->execute();
 $result = $stmt->get_result();
-
+$stmt->close();
 ?>
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="utf-8">
-    <title>Stock Log</title>
-    <link rel="stylesheet" href="asset/style.css">
-    <style>
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:8px;border:1px solid #ddd}
-    .controls{display:flex;gap:12px;align-items:center;margin-bottom:12px}
-    .kv{display:inline-block;padding:6px 10px;background:#0077cc;color:#fff;border-radius:6px;text-decoration:none}
-    </style>
+  <meta charset="utf-8">
+  <title>Stock Log • BottleBank</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="asset/style.css">
+  <style>
+    .topbar .logo { width:40px; height:40px; background:#26a69a; color:white; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:700; margin-right:10px; }
+    .kv { color:#26a69a; text-decoration:none; }
+    .kv:hover { text-decoration:underline; }
+    .controls { background:white; padding:15px; border-radius:6px; margin-bottom:20px; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
+    .controls form { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .controls select, .controls input { padding:8px; border:1px solid #ddd; border-radius:6px; font-size:13px; }
+    .controls button { padding:8px 15px; background:#26a69a; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600; }
+    .controls button:hover { background:#2e7d7d; }
+    table { width:100%; border-collapse:collapse; background:white; border-radius:6px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
+    th { background:#e0f2f1; color:#00796b; padding:12px; text-align:left; font-weight:600; }
+    td { padding:12px; border-bottom:1px solid #eee; }
+    tr:hover { background:#f5f5f5; }
+    .toggle-sidebar { background:none; border:none; font-size:18px; cursor:pointer; color:#2d6a6a; font-weight:600; display:none; transition:0.3s; }
+    @media (max-width:768px) { .toggle-sidebar { display:block; } }
+  </style>
 </head>
 <body>
 
-<!-- Sidebar -->
+<div class="sidebar-overlay" onclick="toggleSidebar()"></div>
+
 <div class="sidebar">
     <div class="brand">
-        <h1>BottleBank</h1>
+        <h1>BB</h1>
     </div>
     <nav class="sidebar-nav">
-        <a href="index.php">🏠 Dashboard</a>
-        <a href="deposit.php">💰 Deposit</a>
-        <a href="returns.php">🔁 Returns</a>
-        <a href="refund.php">💸 Refund</a>
-        <a href="stock_log.php" class="active">📦 Stock Log</a>
+        <a href="index.php">Dashboard</a>
+        <a href="deposit.php">Deposit</a>
+        <a href="returns.php">Returns</a>
+        <a href="refund.php">Refund</a>
+        <a href="stock_log.php" class="active">Stock Log</a>
         <?php if($is_admin): ?>
-        <a href="admin/admin_panel.php">⚙️ Admin Panel</a>
+        <a href="admin/admin_panel.php">Admin Panel</a>
         <?php endif; ?>
-        <a href="logout.php" class="logout">🚪 Logout</a>
+        <a href="logout.php" class="logout">Logout</a>
     </nav>
 </div>
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><div class="logo">BB</div><div><h1>Stock Log</h1></div></div>
+    <div class="brand"><button class="toggle-sidebar" onclick="toggleSidebar()">Menu</button><div class="logo">BB</div><div><h1>Stock Log</h1><p class="kv">View all transaction logs</p></div></div>
     <div class="menu-wrap"><a href="index.php" class="kv">← Back to Dashboard</a></div>
   </div>
 
@@ -194,5 +209,22 @@ $result = $stmt->get_result();
     </div>
 
 </div>
+
+<script>
+function toggleSidebar(){
+  const sidebar = document.querySelector('.sidebar');
+  const overlay = document.querySelector('.sidebar-overlay');
+  sidebar.classList.toggle('active');
+  overlay.classList.toggle('active');
+}
+
+document.querySelectorAll('.sidebar-nav a').forEach(link => {
+  link.addEventListener('click', function(){
+    if(window.innerWidth <= 768){
+      toggleSidebar();
+    }
+  });
+});
+</script>
 </body>
 </html>

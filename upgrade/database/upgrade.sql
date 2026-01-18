@@ -40,9 +40,6 @@ CREATE TABLE `deposit` (
 -- Dumping data for table `deposit`
 --
 
-INSERT INTO `deposit` (`deposit_id`, `user_id`, `customer_name`, `bottle_type`, `quantity`, `deposit_date`) VALUES
-(5, 10, 'Sikret', 'Glass Bottle', 2, '2026-01-12 11:58:33'),
-(6, 10, 'christian bayot', 'Plastic Bottle (PET)', 5, '2026-01-12 11:59:39');
 
 -- --------------------------------------------------------
 
@@ -62,8 +59,6 @@ CREATE TABLE `refund` (
 -- Dumping data for table `refund`
 --
 
-INSERT INTO `refund` (`refund_id`, `user_id`, `amount`, `refund_date`, `customer_name`) VALUES
-(5, 10, 200.00, '2026-01-12 12:00:10', NULL);
 
 -- --------------------------------------------------------
 
@@ -84,8 +79,6 @@ CREATE TABLE `returns` (
 -- Dumping data for table `returns`
 --
 
-INSERT INTO `returns` (`return_id`, `user_id`, `customer_name`, `bottle_type`, `quantity`, `return_date`) VALUES
-(5, 10, '0', 'Plastic Bottle (PET)', 5, '2026-01-12 12:05:31');
 
 -- --------------------------------------------------------
 
@@ -109,11 +102,6 @@ CREATE TABLE `stock_log` (
 -- Dumping data for table `stock_log`
 --
 
-INSERT INTO `stock_log` (`log_id`, `user_id`, `action_type`, `customer_name`, `bottle_type`, `quantity`, `amount`, `details`, `date_logged`) VALUES
-(9, 10, 'Deposit', 'Sikret', 'Glass Bottle', 2, 3.00, 'Successfully recorded', '2026-01-12 11:58:33'),
-(10, 10, 'Deposit', 'christian bayot', 'Plastic Bottle (PET)', 5, 0.00, 'Successfully recorded', '2026-01-12 11:59:39'),
-(11, 10, 'Refund', NULL, NULL, NULL, 200.00, 'Successfully recorded', '2026-01-12 12:00:10'),
-(12, 10, 'Return', 'christian bayot', 'Plastic Bottle (PET)', 5, NULL, 'Successfully recorded', '2026-01-12 12:05:31');
 
 -- --------------------------------------------------------
 
@@ -131,14 +119,18 @@ CREATE TABLE `user` (
   `role` enum('user','admin') DEFAULT 'user'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- --------------------------------------------------------
+
 --
--- Dumping data for table `user`
+-- Table structure for table `bottle_types`
 --
 
-INSERT INTO `user` (`user_id`, `username`, `email`, `password`, `created_at`, `force_change`, `role`) VALUES
-(8, 'ramo', 'ramo@gmail.com', '$2y$10$glUzgq77ib258ZD6QLMnVu0PmMTwbelzooWV8MfOo4RtD5ndf/cM6', '2026-01-09 17:06:14', 0, 'user'),
-(10, 'cj', 'admin@bottlebank.com', '$2y$10$dpcVNEf2bLicP7lXB0UnHusXwtpWrqNNyj2abRPy9DqlR.9WWGqrq', '2026-01-09 18:26:05', 0, 'user'),
-(13, 'admin#1', 'justincantarona061@gmail.com', '$2y$10$K5zIsVZenAo5.IMDNX.V2.nMbcwBXsRpdF0zFMTFqVo3.3jW4hPQO', '2026-01-13 14:46:52', 0, 'admin');
+CREATE TABLE `bottle_types` (
+  `type_id` int(11) NOT NULL,
+  `type_name` varchar(100) NOT NULL,
+  `created_at` datetime DEFAULT current_timestamp(),
+  `created_by` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
 -- Indexes for dumped tables
@@ -185,6 +177,14 @@ ALTER TABLE `user`
   ADD UNIQUE KEY `email` (`email`);
 
 --
+-- Indexes for table `bottle_types`
+--
+ALTER TABLE `bottle_types`
+  ADD PRIMARY KEY (`type_id`),
+  ADD UNIQUE KEY `type_name` (`type_name`),
+  ADD KEY `created_by` (`created_by`);
+
+--
 -- AUTO_INCREMENT for dumped tables
 --
 
@@ -219,6 +219,12 @@ ALTER TABLE `user`
   MODIFY `user_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=14;
 
 --
+-- AUTO_INCREMENT for table `bottle_types`
+--
+ALTER TABLE `bottle_types`
+  MODIFY `type_id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- Constraints for dumped tables
 --
 
@@ -247,14 +253,15 @@ ALTER TABLE `stock_log`
   ADD CONSTRAINT `stock_log_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `user` (`user_id`) ON DELETE CASCADE;
 
 --
+-- Constraints for table `bottle_types`
+--
+ALTER TABLE `bottle_types`
+  ADD CONSTRAINT `bottle_types_ibfk_1` FOREIGN KEY (`created_by`) REFERENCES `user` (`user_id`) ON DELETE SET NULL;
+
+--
 -- Update blank details in stock_log to 'Successfully recorded'
 --
 UPDATE `stock_log` SET `details` = 'Successfully recorded' WHERE `details` IS NULL OR `details` = '';
-
---
--- Alter table to ensure details column exists with proper default
---
-ALTER TABLE `stock_log` MODIFY `details` varchar(255) DEFAULT 'Successfully recorded';
 
 COMMIT;
 

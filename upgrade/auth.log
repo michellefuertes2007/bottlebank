@@ -1,2 +1,10 @@
 [2026-01-15 12:36:27] [127.0.0.1] LOGIN SUCCESS: user=admin#1 id=13
 [2026-01-15 13:36:34] [127.0.0.1] LOGIN SUCCESS: user=jaybayut id=14
+[2026-01-16 01:57:50] [127.0.0.1] LOGIN SUCCESS: user=jaybayut id=14
+[2026-01-16 02:32:03] [127.0.0.1] LOGIN SUCCESS: user=jaybayut id=14
+[2026-01-18 20:28:56] [127.0.0.1] LOGIN SUCCESS: user=admin#1 id=13
+[2026-01-18 13:34:53] [127.0.0.1] ACCESS DENIED: session_user_id=13
+[2026-01-18 13:34:54] [127.0.0.1] ACCESS DENIED: session_user_id=13
+[2026-01-18 21:36:06] [127.0.0.1] LOGIN SUCCESS: user=admin#1 id=14
+[2026-01-18 21:42:12] [127.0.0.1] LOGIN FAILED: invalid password for user=user10
+[2026-01-18 21:42:17] [127.0.0.1] LOGIN SUCCESS: user=admin#1 id=14

@@ -82,35 +82,237 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 <title>Login | BottleBank</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-body{display:flex;justify-content:center;align-items:center;height:100vh;font-family:Poppins,sans-serif;background:linear-gradient(135deg,#0077cc,#00c16e);}
-.box{background:#fff;padding:35px;width:360px;border-radius:14px;box-shadow:0 10px 25px rgba(0,0,0,.2);}
-h2{text-align:center;color:#0077cc;margin-bottom:10px}
-input,button{width:100%;padding:10px;margin-top:10px;border-radius:8px;border:1px solid #ccc;}
-button{background:#0077cc;color:#fff;font-weight:600;border:none;cursor:pointer;}
-button:hover{background:#005fa3;}
-.link{text-align:center;margin-top:14px;font-size:14px;}
-.link a{text-decoration:none;color:#0077cc;font-weight:600;}
-.link a:hover{text-decoration:underline;}
-.error{color:#d93025;text-align:center;margin-bottom:8px}
-.success{color:#188038;text-align:center;margin-bottom:8px}
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  font-family: 'Poppins', 'Segoe UI', sans-serif;
+  background: linear-gradient(135deg, #0077cc 0%, #00c16e 100%);
+  padding: 20px;
+}
+
+.container {
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.box {
+  background: #ffffff;
+  padding: 40px;
+  width: 100%;
+  border-radius: 14px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+}
+
+.box h2 {
+  color: #0077cc;
+  margin-bottom: 30px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  text-align: center;
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  text-align: left;
+  margin-bottom: 8px;
+  color: #333;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1.5px solid #ddd;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: 'Poppins', sans-serif;
+  transition: all 0.3s ease;
+}
+
+input:focus {
+  outline: none;
+  border-color: #0077cc;
+  box-shadow: 0 0 8px rgba(0, 119, 204, 0.3);
+  background: #f9fafb;
+}
+
+button {
+  width: 100%;
+  padding: 12px;
+  margin-top: 20px;
+  background: #0077cc;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+button:hover {
+  background: #005fa3;
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(0, 119, 204, 0.3);
+}
+
+button:active {
+  transform: translateY(0);
+}
+
+.link {
+  text-align: center;
+  margin-top: 20px;
+  font-size: 14px;
+  color: #666;
+}
+
+.link a {
+  text-decoration: none;
+  color: #0077cc;
+  font-weight: 600;
+  transition: all 0.3s ease;
+}
+
+.link a:hover {
+  text-decoration: underline;
+  color: #005fa3;
+}
+
+.error {
+  color: #d93025;
+  text-align: center;
+  margin-bottom: 16px;
+  background: #ffecec;
+  padding: 12px 14px;
+  border-radius: 6px;
+  border-left: 4px solid #d93025;
+  font-weight: 500;
+}
+
+.success {
+  color: #188038;
+  text-align: center;
+  margin-bottom: 16px;
+  background: #e9fbf1;
+  padding: 12px 14px;
+  border-radius: 6px;
+  border-left: 4px solid #188038;
+  font-weight: 500;
+}
+
+@media (max-width: 768px) {
+  body {
+    padding: 15px;
+  }
+
+  .box {
+    padding: 30px 20px;
+  }
+
+  .box h2 {
+    font-size: 24px;
+    margin-bottom: 25px;
+  }
+
+  input {
+    padding: 11px 12px;
+    font-size: 13px;
+  }
+
+  button {
+    padding: 11px;
+    font-size: 14px;
+    margin-top: 18px;
+  }
+
+  .form-group {
+    margin-bottom: 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  body {
+    padding: 10px;
+  }
+
+  .box {
+    padding: 25px 18px;
+    border-radius: 10px;
+  }
+
+  .box h2 {
+    font-size: 22px;
+    margin-bottom: 20px;
+  }
+
+  input {
+    padding: 10px 11px;
+    font-size: 12px;
+  }
+
+  button {
+    padding: 10px;
+    font-size: 13px;
+    margin-top: 16px;
+  }
+
+  .form-group {
+    margin-bottom: 12px;
+  }
+
+  .link {
+    font-size: 12px;
+  }
+}
 </style>
 </head>
 <body>
-<div class="box">
-<h2>BottleBank Login</h2>
+<div class="container">
+  <div class="box">
+    <h2>BottleBank Login</h2>
 
-<?php if($error): ?><div class="error"><?= $error ?></div><?php endif; ?>
-<?php if($success): ?><div class="success"><?= $success ?></div><?php endif; ?>
+    <?php if($error): ?><div class="error"><?= htmlspecialchars($error) ?></div><?php endif; ?>
+    <?php if($success): ?><div class="success"><?= htmlspecialchars($success) ?></div><?php endif; ?>
 
-<form method="post">
-<input type="text" name="username" placeholder="Username" required>
-<input type="password" name="password" placeholder="Password" required>
-<button type="submit">Login</button>
-</form>
+    <form method="post">
+      <div class="form-group">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" placeholder="Enter your username" required>
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" placeholder="Enter your password" required>
+      </div>
+      <button type="submit">Login</button>
+    </form>
 
-<div class="link">
-Don’t have an account? <a href="register.php">Sign up</a>
-</div>
+    <div class="link">
+      Don't have an account? <a href="register.php">Sign up here</a>
+    </div>
+  </div>
 </div>
 </body>
 </html>

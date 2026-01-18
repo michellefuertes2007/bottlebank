@@ -7,29 +7,57 @@ $is_admin = (isset($_SESSION['role']) && $_SESSION['role'] === 'admin');
 $msg = '';
 $error = '';
 
-// Handle form submission
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['edit_id'])) {
-  $customer_name = trim($_POST['customer_name'] ?? '');
-  $bottle_type   = trim($_POST['bottle_type'] ?? '');
-  $quantity      = intval($_POST['quantity'] ?? 0);
-  $amount        = floatval($_POST['amount'] ?? 0);
+// Get all bottle types from database
+$bottle_types_list = [];
+$btResult = $conn->query("SELECT type_id, type_name FROM bottle_types ORDER BY type_name ASC");
+if ($btResult) {
+  while ($row = $btResult->fetch_assoc()) {
+    $bottle_types_list[] = $row;
+  }
+}
 
-  // Check if quantity is valid
+// Handle adding new bottle type
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_bottle_type'])) {
+  $new_type = trim($_POST['new_bottle_type'] ?? '');
+  if ($new_type) {
+    $stmt = $conn->prepare("INSERT INTO bottle_types (type_name, created_by) VALUES (?, ?)");
+    $stmt->bind_param("si", $new_type, $user_id);
+    if ($stmt->execute()) {
+      $msg = "Bottle type '$new_type' added successfully!";
+      header("refresh:1");
+    } else {
+      $error = "Error adding bottle type: " . $stmt->error;
+    }
+    $stmt->close();
+  }
+}
+
+// Handle form submission for deposits
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['edit_id']) && !isset($_POST['add_bottle_type'])) {
+  $customer_name = trim($_POST['customer_name'] ?? '');
+  $bottle_type = trim($_POST['bottle_type'] ?? '');
+  $quantity = intval($_POST['quantity'] ?? 0);
+  $amount = floatval($_POST['amount'] ?? 0);
+  
+  // Validate single bottle entry
   if ($quantity <= 0) {
-    $error = 'Please enter a valid quantity greater than zero.';
+    $error = 'Please enter a quantity greater than zero.';
   } elseif ($amount < 0) {
     $error = 'Amount cannot be negative.';
+  } elseif (!$bottle_type) {
+    $error = 'Please select a bottle type.';
   } else {
-    // insert deposit using prepared statement
+    // insert single deposit
     $ins = $conn->prepare("INSERT INTO deposit (user_id, customer_name, bottle_type, quantity, deposit_date) VALUES (?, ?, ?, ?, NOW())");
     $ins->bind_param("issi", $user_id, $customer_name, $bottle_type, $quantity);
     if ($ins->execute()) {
       // insert stock_log
       $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, amount) VALUES (?, 'Deposit', ?, ?, ?, ?)");
-      $log->bind_param("issid", $user_id, $customer_name, $bottle_type, $quantity, $amount);
-      $log->execute(); $log->close();
-
-      $msg = 'Deposit recorded successfully.';
+      $log->bind_param("issii", $user_id, $customer_name, $bottle_type, $quantity, $amount);
+      $log->execute(); 
+      $log->close();
+      $msg = 'Deposit recorded successfully!';
+      header("refresh:1;url=index.php");
     } else {
       $error = 'Database error: ' . $ins->error;
     }
@@ -37,16 +65,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['edit_id'])) {
   }
 }
 
-// fetch last 12 deposits for this user
-$stmt = $conn->prepare("SELECT deposit_id, customer_name, bottle_type, quantity, deposit_date FROM deposit WHERE user_id = ? ORDER BY deposit_date DESC LIMIT 12");
-$stmt->bind_param("i", $user_id);
-$stmt->execute();
-$deposits = $stmt->get_result();
-
-// Handle admin correction (edit)
+// Admin edit handling
 if ($is_admin && isset($_GET['edit_id'])) {
   $edit_id = intval($_GET['edit_id']);
-  $eSt = $conn->prepare("SELECT deposit_id, customer_name, bottle_type, quantity, amount FROM deposit WHERE deposit_id = ?");
+  $eSt = $conn->prepare("SELECT deposit_id, customer_name, bottle_type, quantity, deposit_date FROM deposit WHERE deposit_id = ?");
   $eSt->bind_param('i', $edit_id);
   $eSt->execute();
   $editRow = $eSt->get_result()->fetch_assoc();
@@ -91,135 +113,178 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
   <title>Deposit • BottleBank</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <link rel="stylesheet" href="asset/style.css">
+  <style>
+    .topbar .logo { width:40px; height:40px; background:#26a69a; color:white; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:700; margin-right:10px; }
+    .kv { color:#26a69a; text-decoration:none; }
+    .kv:hover { text-decoration:underline; }
+    .form-row { display:flex; gap:15px; margin-bottom:15px; }
+    .form-row .col { flex:1; }
+    .form-row .col label { display:block; font-weight:600; margin-bottom:5px; color:#333; }
+    .form-row .col input, .form-row .col select { width:100%; padding:10px; border:1px solid #ddd; border-radius:6px; font-size:14px; }
+    .form-row .col input:focus, .form-row .col select:focus { outline:none; border-color:#26a69a; box-shadow:0 0 4px rgba(38,166,154,0.2); }
+    button { padding:10px 15px; border:none; border-radius:6px; cursor:pointer; font-weight:600; transition:0.3s; }
+    button.primary { background:#26a69a; color:white; }
+    button.primary:hover { background:#2e7d7d; }
+    button.ghost { background:#80cbc4; color:#004d40; border:1px solid #80cbc4; }
+    button.ghost:hover { background:#4db6ac; }
+    .notice { padding:12px 15px; background:#e9fbf1; border-left:4px solid #26a69a; border-radius:6px; margin-bottom:15px; color:#155724; font-weight:500; }
+    .error { padding:12px 15px; background:#ffecec; border-left:4px solid #ef5350; border-radius:6px; margin-bottom:15px; color:#c62828; font-weight:500; }
+    .topbar .toggle-sidebar { background:none; border:none; font-size:18px; cursor:pointer; color:#2d6a6a; font-weight:600; display:none; transition:0.3s; }
+    .topbar .toggle-sidebar:hover { color:#00796b; }
+    @media (max-width:768px) { .topbar .toggle-sidebar { display:block; } }
+  </style>
 </head>
 <body>
+
+<!-- Sidebar Overlay -->
+<div class="sidebar-overlay" onclick="toggleSidebar()"></div>
 
 <!-- Sidebar -->
 <div class="sidebar">
     <div class="brand">
-        <h1>BottleBank</h1>
+        <h1>BB</h1>
     </div>
     <nav class="sidebar-nav">
-        <a href="index.php">🏠 Dashboard</a>
-        <a href="deposit.php" class="active">💰 Deposit</a>
-        <a href="returns.php">🔁 Returns</a>
-        <a href="refund.php">💸 Refund</a>
-        <a href="stock_log.php">📦 Stock Log</a>
+        <a href="index.php">Dashboard</a>
+        <a href="deposit.php" class="active">Deposit</a>
+        <a href="returns.php">Returns</a>
+        <a href="refund.php">Refund</a>
+        <a href="stock_log.php">Stock Log</a>
         <?php if($is_admin): ?>
-        <a href="admin/admin_panel.php">⚙️ Admin Panel</a>
+        <a href="admin/admin_panel.php">Admin Panel</a>
         <?php endif; ?>
-        <a href="logout.php" class="logout">🚪 Logout</a>
+        <a href="logout.php" class="logout">Logout</a>
     </nav>
 </div>
-  
-<div class="app">
+  <div class="app">
   <div class="topbar">
-    <div class="brand"><div class="logo">BB</div><div><h1>Deposit</h1><p class="kv">Add new deposit</p></div></div>
+    <div class="brand">
+        <button class="toggle-sidebar" onclick="toggleSidebar()">Menu</button><div class="logo">BB</div><div><h1>Deposit</h1><p class="kv">Record and manage bottle deposits</p></div></div>
     <div class="menu-wrap"><a href="index.php" class="kv">← Back to Dashboard</a></div>
   </div>
 
   <div class="grid" style="margin-top:8px;">
-    <div class="panel" style="grid-column: span 8;">
+    <!-- Form -->
+    <div class="panel" style="grid-column: span 12;">
       <h3 style="margin-top:0">New Deposit</h3>
-
-      <?php if($msg): ?>
-        <div style="padding:12px;background:#e9fbf1;border-left:4px solid var(--accent2);border-radius:8px;margin-bottom:12px;"><?=htmlspecialchars($msg)?></div>
-      <?php endif; ?>
-
-      <?php if($error): ?><div class="error" style="margin-bottom:12px;padding:8px;background:#ffecec;border-left:4px solid #f5c6cb"><?=htmlspecialchars($error)?></div><?php endif; ?>
-      <form method="post" style="max-width:760px" onsubmit="return confirmDeposit(event)">
-        <div class="form-row">
-          <div class="col">
-            <label>Customer Name</label>
-            <input type="text" name="customer_name" placeholder="Customer or client name">
+      <?php if($msg): ?><div class="notice"><?=htmlspecialchars($msg)?></div><?php endif; ?>
+      <?php if($error): ?><div class="error"><?=htmlspecialchars($error)?></div><?php endif; ?>
+      
+      <form method="post" style="max-width:760px" id="depositForm">
+        <div class="bottle-entry" style="border:1px solid #e0e0e0;padding:15px;border-radius:6px;margin-bottom:15px;background:#fafafa;">
+          
+          <div class="form-row">
+            <div class="col">
+              <label>Customer Name</label>
+              <input type="text" name="customer_name" placeholder="Enter customer name">
+            </div>
           </div>
-          <div class="col">
-            <label>Bottle Type</label>
-            <select name="bottle_type" required>
-              <option value="">Select type</option>
-              <option>Plastic Bottle (PET)</option>
-              <option>Glass Bottle</option>
-              <option>Can</option>
-            </select>
+
+          <div class="form-row">
+            <div class="col">
+              <label>Bottle Type</label>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <select name="bottle_type" required style="flex:1;">
+                  <option value="">Select type...</option>
+                  <?php foreach ($bottle_types_list as $type): ?>
+                    <option value="<?= htmlspecialchars($type['type_name']) ?>"><?= htmlspecialchars($type['type_name']) ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+            </div>
+            <div class="col">
+              <label>Quantity</label>
+              <input type="number" name="quantity" min="1" placeholder="Number of bottles" required>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="col">
+              <label>Amount (optional)</label>
+              <input type="number" step="0.01" name="amount" min="0" placeholder="₱ 0.00">
+            </div>
           </div>
         </div>
 
-        <div class="form-row">
-          <div class="col">
-            <label>Quantity</label>
-            <input type="number" name="quantity" min="1" required>
-          </div>
-          <div class="col">
-            <label>Amount (optional)</label>
-            <input type="number" step="0.01" name="amount" min="0" placeholder="Total money (₱)">
-          </div>
-        </div>
-
-        <div style="display:flex;gap:12px">
+        <div style="display:flex;gap:12px;margin-top:20px;flex-wrap:wrap;align-items:center;">
           <button type="submit" class="primary">Save Deposit</button>
-          <a href="index.php"><button type="button" class="ghost">Cancel</button></a>
+          <a href="index.php"><button type="button" class="ghost" style="background:#e0e0e0;color:#666;">Cancel</button></a>
         </div>
       </form>
+
+      <!-- Add New Bottle Type Section -->
+      <div style="margin-top:30px;padding:15px;background:#e9fbf1;border-radius:6px;border:1px solid #26a69a;">
+        <h4 style="color:#2d6a6a;margin-top:0;">Add New Bottle Type</h4>
+        <p style="color:#666;font-size:13px;margin-bottom:12px;">Don't see the bottle type you need? Add it here and it will be available for all deposits.</p>
+        <form method="post" style="display:flex;gap:10px;">
+          <input type="text" name="new_bottle_type" placeholder="Enter new bottle type (e.g., Glass Jug, Carton)" required style="flex:1;padding:10px;border:1px solid #26a69a;border-radius:6px;">
+          <button type="submit" name="add_bottle_type" class="primary" style="white-space:nowrap;">Add Type</button>
+        </form>
+      </div>
+
 
       <script>
-      function confirmDeposit(e){
-        const qty = parseInt(document.querySelector('[name="quantity"]').value) || 0;
-        const amt = parseFloat(document.querySelector('[name="amount"]').value) || 0;
-        if(qty<=0){ alert('Quantity must be greater than zero.'); e.preventDefault(); return false; }
-        if(amt<0){ alert('Amount cannot be negative.'); e.preventDefault(); return false; }
-        return confirm('Confirm save deposit?');
+      function toggleSidebar(){
+        document.querySelector('.sidebar').classList.toggle('show');
+        document.querySelector('.sidebar-overlay').classList.toggle('show');
       }
+      document.querySelector('.sidebar-overlay').addEventListener('click', toggleSidebar);
       </script>
-      
-      <?php if($is_admin && isset($editRow)): ?>
-        <h3>Edit Deposit #<?= $editRow['deposit_id'] ?></h3>
-        <form method="POST" onsubmit="return confirmCorrection(event)">
-          <input type="hidden" name="edit_id" value="<?= $editRow['deposit_id'] ?>">
-          <label>Customer Name</label>
-          <input type="text" name="customer_name" value="<?=htmlspecialchars($editRow['customer_name'])?>">
-          <label>Bottle Type</label>
-          <input type="text" name="bottle_type" value="<?=htmlspecialchars($editRow['bottle_type'])?>">
-          <label>Quantity</label>
-          <input type="number" name="quantity" min="1" value="<?=htmlspecialchars($editRow['quantity'])?>" required>
-          <label>Amount (optional)</label>
-          <input type="number" step="0.01" name="amount" min="0" value="<?=htmlspecialchars($editRow['amount'] ?? '')?>">
-          <div style="margin-top:8px"><button type="submit">Save Correction</button></div>
-        </form>
-        <script>
-          function confirmCorrection(e){
-            const amtInput = document.querySelector('form input[name="amount"]');
-            const amt = parseFloat(amtInput && amtInput.value ? amtInput.value : '0') || 0;
-            if(amt < 0){ alert('Amount cannot be negative.'); e.preventDefault(); return false; }
-            return confirm('Apply this correction?');
-          }
-        </script>
-      <?php endif; ?>
-      </form>
-
-      <h3 style="margin-top:22px">Recent Deposits</h3>
-      <div class="table-wrap">
-        <table class="table">
-          <thead><tr><th>#</th><th>Customer</th><th>Type</th><th>Quantity</th><th>Date</th><?php if($is_admin) echo '<th>Actions</th>'; ?></tr></thead>
-          <tbody>
-            <?php while($r = $deposits->fetch_assoc()): ?>
-              <tr>
-                <td><?=htmlspecialchars($r['deposit_id'])?></td>
-                <td><?=htmlspecialchars($r['customer_name']?:'-')?></td>
-                <td><?=htmlspecialchars($r['bottle_type'])?></td>
-                <td><?=htmlspecialchars($r['quantity'])?></td>
-                <td><?=htmlspecialchars($r['deposit_date'])?></td>
-                <?php if($is_admin): ?>
-                  <td><a href="?edit_id=<?=htmlspecialchars($r['deposit_id'])?>">Edit</a></td>
-                <?php endif; ?>
-              </tr>
-            <?php endwhile; ?>
-          </tbody>
-        </table>
-      </div>
     </div>
   </div>
+  
+  <?php if ($is_admin && isset($editRow)): ?>
+  <div class="panel" style="margin-top:20px;">
+    <h3>Edit Deposit #<?= $editRow['deposit_id'] ?></h3>
+    <form method="POST" style="max-width:600px">
+      <input type="hidden" name="edit_id" value="<?= $editRow['deposit_id'] ?>">
+      <div class="form-row">
+        <div class="col">
+          <label>Customer Name</label>
+          <input type="text" name="customer_name" value="<?=htmlspecialchars($editRow['customer_name'])?>" required>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="col">
+          <label>Bottle Type</label>
+          <input type="text" name="bottle_type" value="<?=htmlspecialchars($editRow['bottle_type'])?>" required>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="col">
+          <label>Quantity</label>
+          <input type="number" name="quantity" value="<?=htmlspecialchars($editRow['quantity'])?>" min="1" required>
+        </div>
+        <div class="col">
+          <label>Amount</label>
+          <input type="number" step="0.01" min="0" name="amount" placeholder="₱ 0.00" required>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:20px">
+        <button type="submit" class="primary">Save Correction</button>
+        <a href="deposit.php"><button type="button" class="ghost">Cancel</button></a>
+      </div>
+    </form>
+  </div>
+  <?php endif; ?>
 
-  <div class="footer">© <?=date('Y')?> BottleBank</div>
-</div>
+  </div>
+
+<script>
+function toggleSidebar(){
+  const sidebar = document.querySelector('.sidebar');
+  const overlay = document.querySelector('.sidebar-overlay');
+  sidebar.classList.toggle('active');
+  overlay.classList.toggle('active');
+}
+
+document.querySelectorAll('.sidebar-nav a').forEach(link => {
+  link.addEventListener('click', function(){
+    if(window.innerWidth <= 768){
+      toggleSidebar();
+    }
+  });
+});
+</script>
 </body>
 </html>
