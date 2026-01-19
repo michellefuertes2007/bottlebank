@@ -8,21 +8,26 @@ $is_admin = (isset($_SESSION['role']) && $_SESSION['role'] === 'admin');
 $msg = '';
 $error = '';
 
+// Get all bottle types from database
+$bottle_types_list = [];
+$btResult = $conn->query("SELECT type_id, type_name FROM bottle_types ORDER BY type_name ASC");
+if ($btResult) {
+  while ($row = $btResult->fetch_assoc()) {
+    $bottle_types_list[] = $row;
+  }
+}
+
 // Handle creation
 if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
   $customer_name = trim($_POST['customer_name'] ?? '');
   $bottle_type = trim($_POST['bottle_type'] ?? '');
-  $bottle_type_custom = trim($_POST['bottle_type_custom'] ?? '');
-  
-  // Use custom type if selected
-  if($bottle_type === '__custom__'){
-    $bottle_type = $bottle_type_custom;
-  }
   
   $quantity = intval($_POST['quantity'] ?? 0);
 
   if ($quantity <= 0) {
     $error = 'Please enter a valid quantity greater than zero.';
+  } elseif (!$bottle_type) {
+    $error = 'Please select a bottle type.';
   } else {
     $stmt = $conn->prepare("INSERT INTO returns (user_id, customer_name, bottle_type, quantity, return_date) VALUES (?, ?, ?, ?, NOW())");
     $stmt->bind_param('sisi', $user_id, $customer_name, $bottle_type, $quantity);
@@ -154,9 +159,11 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] == "POST" && isset($_POST['edit_id']
               <label>Bottle Type</label>
               <select name="bottle_type" required>
                 <option value="">Select type</option>
-                <option value="Plastic Bottle (PET)" <?= ($editRow['bottle_type'] ?? '') === 'Plastic Bottle (PET)' ? 'selected' : '' ?>>Plastic Bottle (PET)</option>
-                <option value="Glass Bottle" <?= ($editRow['bottle_type'] ?? '') === 'Glass Bottle' ? 'selected' : '' ?>>Glass Bottle</option>
-                <option value="Can" <?= ($editRow['bottle_type'] ?? '') === 'Can' ? 'selected' : '' ?>>Can</option>
+                <?php foreach ($bottle_types_list as $type): ?>
+                  <option value="<?= htmlspecialchars($type['type_name']) ?>" <?= ($editRow['bottle_type'] ?? '') === $type['type_name'] ? 'selected' : '' ?>>
+                    <?= htmlspecialchars($type['type_name']) ?>
+                  </option>
+                <?php endforeach; ?>
               </select>
             </div>
           </div>
@@ -182,14 +189,14 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] == "POST" && isset($_POST['edit_id']
           <div class="form-row">
             <div class="col">
               <label>Bottle Type</label>
-              <select name="bottle_type" required id="bottleTypeSelect">
+              <select name="bottle_type" required>
                 <option value="">Select type...</option>
-                <option>Plastic Bottle (PET)</option>
-                <option>Glass Bottle</option>
-                <option>Can</option>
-                <option value="__custom__">+ Add Custom Type</option>
+                <?php foreach ($bottle_types_list as $type): ?>
+                  <option value="<?= htmlspecialchars($type['type_name']) ?>">
+                    <?= htmlspecialchars($type['type_name']) ?>
+                  </option>
+                <?php endforeach; ?>
               </select>
-              <input type="text" name="bottle_type_custom" id="customBottleInput" placeholder="Enter custom type" style="display:none;margin-top:8px;width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;">
             </div>
           </div>
           <div class="form-row">

@@ -72,13 +72,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_user'])) {
             $u = $conn->prepare("UPDATE user SET password = ?, force_change = 1 WHERE user_id = ?");
             $u->bind_param('si', $hash, $target_id);
             if ($u->execute()) {
-                // log the reset
+                // log the reset to stock_log for compatibility
                 $admin_id = intval($_SESSION['user_id']);
                 $action = 'Password Reset';
                 $target_username = $res['username'];
                 $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name) VALUES (?, ?, ?)");
                 $log->bind_param('iss', $admin_id, $action, $target_username);
                 $log->execute(); $log->close();
+                
+                // log the reset to password_log table
+                $pw_log = $conn->prepare("INSERT INTO password_log (user_id, changed_by_id, change_type) VALUES (?, ?, 'Admin Reset')");
+                $pw_log->bind_param('ii', $target_id, $admin_id);
+                $pw_log->execute(); $pw_log->close();
 
                 $msg = "Temporary password for {$target_username}: <strong>" . htmlspecialchars($temp) . "</strong>. User will be forced to change on next login.";
             } else {
@@ -136,19 +141,73 @@ html, body {
   height: 100%;
 }
 
+
 body {
   font-family: 'Poppins', 'Segoe UI', sans-serif;
   background: #f0f7f7;
   color: #333;
+  display: flex;
+  height: 100vh;
+}
+
+.sidebar {
+  width: 250px;
+  background: linear-gradient(135deg, #2d6a6a 0%, #1e4a4a 100%);
+  color: white;
+  padding: 20px;
+  overflow-y: auto;
+  box-shadow: 2px 0 8px rgba(0,0,0,0.15);
+  position: fixed;
+  height: 100vh;
+  left: 0;
+  top: 0;
+}
+
+.sidebar h2 {
+  color: white;
+  border: none;
+  padding: 0;
+  margin: 0 0 30px 0;
+  font-size: 20px;
+  text-align: center;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-nav a {
+  padding: 12px 16px;
+  color: white;
+  text-decoration: none;
+  border-radius: 6px;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.sidebar-nav a:hover {
+  background: rgba(255,255,255,0.1);
+  padding-left: 20px;
+}
+
+.sidebar-nav a.active {
+  background: #26a69a;
+  font-weight: 600;
+}
+
+.main-content {
+  margin-left: 250px;
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
 }
 
 .container {
-  max-width: 1200px;
-  margin: 20px auto;
+  width: 100%;
   padding: 20px;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+  background: transparent;
 }
 
 h1 {
@@ -366,9 +425,37 @@ form button:hover {
 
 /* Responsive Design */
 @media (max-width: 768px) {
+  .sidebar {
+    width: 100%;
+    height: auto;
+    position: relative;
+    padding: 15px;
+  }
+
+  .main-content {
+    margin-left: 0;
+  }
+
+  body {
+    flex-direction: column;
+    height: auto;
+  }
+
+  .sidebar-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .sidebar-nav a {
+    flex: 1;
+    min-width: 120px;
+    padding: 10px 12px;
+    font-size: 12px;
+    text-align: center;
+  }
+
   .container {
     padding: 15px;
-    margin: 10px;
   }
 
   h1 {
@@ -487,15 +574,23 @@ form button:hover {
 </style>
 </head>
 <body>
-<div class="container">
-<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-  <h1 style="margin: 0;">Admin Panel - BottleBank</h1>
-  <a href="../index.php" class="button danger">← Back to Dashboard</a>
+
+<div class="sidebar">
+  <h2>Admin Panel</h2>
+  <div class="sidebar-nav">
+    <a href="#users-section" class="nav-link active" onclick="showSection('users-section')">👥 Users</a>
+    <a href="#password-section" class="nav-link" onclick="showSection('password-section')">🔐 Password History</a>
+    <a href="../index.php" style="margin-top: auto; background: #ef5350; text-align: center;">← Back to Dashboard</a>
+  </div>
 </div>
+
+<div class="main-content">
+<div class="container">
 
 <?php if(isset($msg)) echo "<div class='msg'>{$msg}</div>"; ?>
 
-<h2>Registered Users</h2>
+<div id="users-section" class="section" style="display: block;">
+  <h1>Registered Users</h1>
 
 <!-- Search Bar -->
 <div style="margin-bottom: 20px; display: flex; gap: 10px; align-items: center;">
@@ -661,6 +756,103 @@ $logs = $conn->query("SELECT * FROM stock_log WHERE user_id=$uid ORDER BY date_l
 </table>
 </div>
 </div>
+</div>
+
+<!-- Password Change Log Section -->
+<div id="password-section" class="section" style="display: none;">
+    <h1>Password Change History</h1>
+    <p style="color: #666; font-size: 14px;">View all password changes made by users and admin resets</p>
+    
+    <?php
+    // Fetch password change log
+    $log_page = isset($_GET['log_page']) ? max(1, intval($_GET['log_page'])) : 1;
+    $log_per_page = 10;
+    $log_offset = ($log_page - 1) * $log_per_page;
+    
+    // First, check if password_log table exists
+    $table_check = $conn->query("SHOW TABLES LIKE 'password_log'");
+    if ($table_check && $table_check->num_rows > 0) {
+        // Get total password log records
+        $log_count_query = "SELECT COUNT(*) as total FROM password_log";
+        $log_count_result = $conn->query($log_count_query);
+        $log_total = $log_count_result->fetch_assoc()['total'];
+        $log_total_pages = ceil($log_total / $log_per_page);
+        
+        // Get password log records
+        $log_query = "SELECT pl.log_id, u.user_id, u.username, u.email, a.username as admin_username, pl.change_type, pl.changed_at 
+                      FROM password_log pl
+                      JOIN user u ON pl.user_id = u.user_id
+                      LEFT JOIN user a ON pl.changed_by_id = a.user_id
+                      ORDER BY pl.changed_at DESC
+                      LIMIT $log_offset, $log_per_page";
+        $log_result = $conn->query($log_query);
+        
+        if ($log_result && $log_result->num_rows > 0) {
+    ?>
+        <table class="password-log-table">
+            <thead>
+                <tr>
+                    <th>User</th>
+                    <th>Email</th>
+                    <th>Change Type</th>
+                    <th>Changed By</th>
+                    <th>Date & Time</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php while($plog = $log_result->fetch_assoc()): ?>
+                <tr>
+                    <td><strong><?= htmlspecialchars($plog['username']) ?></strong> (ID: <?= $plog['user_id'] ?>)</td>
+                    <td><?= htmlspecialchars($plog['email']) ?></td>
+                    <td>
+                        <span class="change-type <?= strtolower($plog['change_type'] ?? 'self') ?>">
+                            <?= htmlspecialchars($plog['change_type'] ?? 'Self') ?>
+                        </span>
+                    </td>
+                    <td>
+                        <?php if($plog['admin_username']): ?>
+                            <strong><?= htmlspecialchars($plog['admin_username']) ?></strong> (Admin)
+                        <?php else: ?>
+                            <span style="color: #999;">User Self</span>
+                        <?php endif; ?>
+                    </td>
+                    <td><?= date("M d, Y - h:i A", strtotime($plog['changed_at'])) ?></td>
+                </tr>
+                <?php endwhile; ?>
+            </tbody>
+        </table>
+        
+        <!-- Pagination for Password Log -->
+        <?php if($log_total_pages > 1): ?>
+        <div style="margin-top: 20px; display: flex; gap: 8px; flex-wrap: wrap;">
+            <?php if($log_page > 1): ?>
+                <a href="?log_page=1" class="button secondary">« First</a>
+                <a href="?log_page=<?= $log_page - 1 ?>" class="button secondary">‹ Previous</a>
+            <?php endif; ?>
+            
+            <span style="display: flex; align-items: center; padding: 10px; color: #666; font-size: 14px;">
+                Page <?= $log_page ?> of <?= $log_total_pages ?> (<?= $log_total ?> total changes)
+            </span>
+            
+            <?php if($log_page < $log_total_pages): ?>
+                <a href="?log_page=<?= $log_page + 1 ?>" class="button secondary">Next ›</a>
+                <a href="?log_page=<?= $log_total_pages ?>" class="button secondary">Last »</a>
+            <?php endif; ?>
+        </div>
+        <?php endif; ?>
+        <?php
+        } else {
+            echo "<p style='color: #888; text-align: center; padding: 20px;'>No password changes recorded yet.</p>";
+        }
+    } else {
+        echo "<p style='color: #888; text-align: center; padding: 20px;'>Password log table not found. Please check your database schema.</p>";
+    }
+    ?>
+</div>
+</div>
+
+</div>
+</div>
 
 <script>
 // Real-time user search functionality
@@ -781,6 +973,88 @@ window.addEventListener('load', function() {
         font-size: 12px;
     }
 }
+
+/* Password Log Styles */
+.password-log-container {
+    margin-top: 40px;
+    padding-top: 20px;
+    border-top: 2px solid #26a69a;
+}
+
+.password-log-container h2 {
+    margin-top: 0;
+}
+
+.password-log-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+}
+
+.password-log-table th,
+.password-log-table td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+}
+
+.password-log-table th {
+    background: #e0f2f1;
+    color: #00796b;
+    font-weight: 700;
+    position: sticky;
+    top: 0;
+}
+
+.password-log-table tr:hover {
+    background: rgba(38,166,154,0.08);
+}
+
+.change-type {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.change-type.self {
+    background: #e9fbf1;
+    color: #155724;
+}
+
+.change-type.admin {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.section {
+  display: none;
+}
+
+.section.active {
+  display: block;
+}
 </style>
+
+<script>
+function showSection(sectionId) {
+  // Hide all sections
+  const sections = document.querySelectorAll('.section');
+  sections.forEach(section => section.style.display = 'none');
+  
+  // Show selected section
+  const selected = document.getElementById(sectionId);
+  if (selected) {
+    selected.style.display = 'block';
+  }
+  
+  // Update active nav link
+  const navLinks = document.querySelectorAll('.nav-link');
+  navLinks.forEach(link => link.classList.remove('active'));
+  event.target.classList.add('active');
+}
+</script>
+
 </body>
 </html>

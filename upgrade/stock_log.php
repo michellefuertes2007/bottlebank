@@ -11,11 +11,29 @@ $page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
 $per_page = isset($_GET['per_page']) && in_array((int)$_GET['per_page'], [10,20]) ? (int)$_GET['per_page'] : 10;
 $filter_type = $_GET['filter_type'] ?? '';
 $filter_value = $_GET['filter_value'] ?? '';
+$search_query = isset($_GET['search']) ? trim($_GET['search']) : '';
 
 // Build WHERE clause and parameters safely
-$where_sql = "WHERE user_id = ?";
-$params = [$user_id];
-$types = 'i';
+$where_sql = "WHERE 1=1";
+$params = [];
+$types = '';
+
+// For regular users, show only their logs; for admins, show all
+if (!$is_admin) {
+  $where_sql .= " AND user_id = ?";
+  $types .= 'i';
+  $params[] = $user_id;
+} elseif ($search_query) {
+  // Search across multiple columns: customer name, bottle type, action type, and numeric fields
+  $where_sql .= " AND (customer_name LIKE ? OR bottle_type LIKE ? OR action_type LIKE ? OR CAST(quantity AS CHAR) LIKE ? OR CAST(amount AS CHAR) LIKE ?)";
+  $types .= 'sssss';
+  $search_param = '%' . $search_query . '%';
+  $params[] = $search_param;
+  $params[] = $search_param;
+  $params[] = $search_param;
+  $params[] = $search_param;
+  $params[] = $search_param;
+}
 
 if ($filter_type === 'day' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $filter_value)) {
     $where_sql .= " AND DATE(date_logged) = ?";
@@ -37,9 +55,6 @@ $stmt = $conn->prepare($count_sql);
 // bind dynamically
 if ($types) {
     $stmt->bind_param($types, ...$params);
-} else {
-    // shouldn't happen as $types starts with 'i'
-    $stmt->bind_param('i', $user_id);
 }
 $stmt->execute();
 $res = $stmt->get_result();
@@ -122,9 +137,13 @@ $stmt->close();
   </div>
 
   <div class="controls">
-    <form method="get" style="display:flex;gap:8px;align-items:center">
-      <label>Filter:</label>
-            <select name="filter_type" id="filter_type">
+    <form method="get" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <?php if($is_admin): ?>
+      <input type="text" name="search" placeholder="Search by Customer, Action, Bottle, Quantity, or Amount..." value="<?= htmlspecialchars($search_query) ?>" style="flex:1;min-width:250px;">
+      <?php endif; ?>
+
+      <label>Period:</label>
+      <select name="filter_type" id="filter_type">
                 <option value="" <?php if($filter_type==='') echo 'selected'; ?>>All</option>
                 <option value="day" <?php if($filter_type==='day') echo 'selected'; ?>>Day</option>
                 <option value="month" <?php if($filter_type==='month') echo 'selected'; ?>>Month</option>
@@ -136,12 +155,14 @@ $stmt->close();
                 <input type="number" name="filter_value_year" id="filter_value_year" min="1900" max="2100" placeholder="YYYY" style="display:none;width:90px">
             </span>
             <input type="hidden" name="filter_value" id="filter_value">
+            
             <label>Per page</label>
             <select name="per_page">
                 <option value="10" <?php if($per_page==10) echo 'selected'; ?>>10</option>
                 <option value="20" <?php if($per_page==20) echo 'selected'; ?>>20</option>
             </select>
-            <button type="submit">Apply</button>
+            <button type="submit">Search</button>
+            <a href="stock_log.php"><button type="button">Clear</button></a>
         </form>
         <script>
             // show appropriate input for selected filter type and populate hidden value

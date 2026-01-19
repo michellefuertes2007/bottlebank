@@ -78,6 +78,84 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] == "POST" && isset($_POST['edit_id']
         $u->close();
     }
 }
+
+// ===== SEARCH AND FILTER SECTION =====
+$search_customer = isset($_GET['search_customer']) ? trim($_GET['search_customer']) : '';
+$search_amount_from = isset($_GET['search_amount_from']) ? floatval($_GET['search_amount_from']) : 0;
+$search_amount_to = isset($_GET['search_amount_to']) ? floatval($_GET['search_amount_to']) : 0;
+$search_date_from = isset($_GET['search_date_from']) ? trim($_GET['search_date_from']) : '';
+$search_date_to = isset($_GET['search_date_to']) ? trim($_GET['search_date_to']) : '';
+$page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+$per_page = 10;
+$offset = ($page - 1) * $per_page;
+
+// Build query based on search parameters
+$where_clauses = [];
+$params = [];
+$param_types = '';
+
+// For regular users, show only their refunds; for admins, show all or search specific user
+if (!$is_admin) {
+  $where_clauses[] = 'user_id = ?';
+  $params[] = $user_id;
+  $param_types .= 'i';
+} elseif ($search_customer) {
+  $where_clauses[] = 'customer_name LIKE ?';
+  $params[] = '%' . $search_customer . '%';
+  $param_types .= 's';
+}
+
+if ($search_amount_from > 0) {
+  $where_clauses[] = 'amount >= ?';
+  $params[] = $search_amount_from;
+  $param_types .= 'd';
+}
+
+if ($search_amount_to > 0) {
+  $where_clauses[] = 'amount <= ?';
+  $params[] = $search_amount_to;
+  $param_types .= 'd';
+}
+
+if ($search_date_from) {
+  $where_clauses[] = 'DATE(refund_date) >= ?';
+  $params[] = $search_date_from;
+  $param_types .= 's';
+}
+
+if ($search_date_to) {
+  $where_clauses[] = 'DATE(refund_date) <= ?';
+  $params[] = $search_date_to;
+  $param_types .= 's';
+}
+
+$where_sql = count($where_clauses) > 0 ? 'WHERE ' . implode(' AND ', $where_clauses) : '';
+
+// Get total count
+$count_sql = "SELECT COUNT(*) as total FROM refund $where_sql";
+$count_stmt = $conn->prepare($count_sql);
+if ($param_types) {
+  $count_stmt->bind_param($param_types, ...$params);
+}
+$count_stmt->execute();
+$total_records = $count_stmt->get_result()->fetch_assoc()['total'];
+$total_pages = ceil($total_records / $per_page);
+$count_stmt->close();
+
+// Get refunds with pagination
+$query_sql = "SELECT refund_id, user_id, customer_name, amount, refund_date FROM refund $where_sql ORDER BY refund_date DESC LIMIT ?, ?";
+$params[] = $offset;
+$param_types .= 'i';
+$params[] = $per_page;
+$param_types .= 'i';
+
+$refund_stmt = $conn->prepare($query_sql);
+if ($param_types) {
+  $refund_stmt->bind_param($param_types, ...$params);
+}
+$refund_stmt->execute();
+$refunds_result = $refund_stmt->get_result();
+$refund_stmt->close();
 ?>
 <!DOCTYPE html>
 <html>

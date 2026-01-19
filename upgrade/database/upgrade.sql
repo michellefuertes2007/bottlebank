@@ -132,6 +132,20 @@ CREATE TABLE `bottle_types` (
   `created_by` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `password_log`
+--
+
+CREATE TABLE `password_log` (
+  `log_id` int(11) NOT NULL,
+  `user_id` int(11) NOT NULL,
+  `changed_by_id` int(11) DEFAULT NULL,
+  `change_type` varchar(50) NOT NULL DEFAULT 'Self',
+  `changed_at` datetime DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
 --
 -- Indexes for dumped tables
 --
@@ -185,6 +199,14 @@ ALTER TABLE `bottle_types`
   ADD KEY `created_by` (`created_by`);
 
 --
+-- Indexes for table `password_log`
+--
+ALTER TABLE `password_log`
+  ADD PRIMARY KEY (`log_id`),
+  ADD KEY `user_id` (`user_id`),
+  ADD KEY `changed_by_id` (`changed_by_id`);
+
+--
 -- AUTO_INCREMENT for dumped tables
 --
 
@@ -225,6 +247,12 @@ ALTER TABLE `bottle_types`
   MODIFY `type_id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `password_log`
+--
+ALTER TABLE `password_log`
+  MODIFY `log_id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- Constraints for dumped tables
 --
 
@@ -257,6 +285,13 @@ ALTER TABLE `stock_log`
 --
 ALTER TABLE `bottle_types`
   ADD CONSTRAINT `bottle_types_ibfk_1` FOREIGN KEY (`created_by`) REFERENCES `user` (`user_id`) ON DELETE SET NULL;
+
+--
+-- Constraints for table `password_log`
+--
+ALTER TABLE `password_log`
+  ADD CONSTRAINT `password_log_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `user` (`user_id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `password_log_ibfk_2` FOREIGN KEY (`changed_by_id`) REFERENCES `user` (`user_id`) ON DELETE SET NULL;
 
 --
 -- Update blank details in stock_log to 'Successfully recorded'

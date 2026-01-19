@@ -16,17 +16,116 @@ if ($btResult) {
   }
 }
 
-// Handle adding new bottle type
+// Handle editing bottle type
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_bottle_type'])) {
+  $type_id = intval($_POST['type_id'] ?? 0);
+  $edit_name = trim($_POST['edit_bottle_name'] ?? '');
+  
+  if (!$type_id) {
+    $error = 'Invalid bottle type.';
+  } elseif (!$edit_name) {
+    $error = 'Please enter a bottle type name.';
+  } elseif (strlen($edit_name) < 3) {
+    $error = 'Bottle type name must be at least 3 characters long.';
+  } elseif (strlen($edit_name) > 100) {
+    $error = 'Bottle type name cannot exceed 100 characters.';
+  } else {
+    $stmt = $conn->prepare("UPDATE bottle_types SET type_name = ? WHERE type_id = ?");
+    $stmt->bind_param("si", $edit_name, $type_id);
+    
+    try {
+      if ($stmt->execute()) {
+        $msg = "✓ Bottle type '" . htmlspecialchars($edit_name) . "' updated successfully!";
+        // Refresh the bottle types list
+        $bottle_types_list = [];
+        $btResult = $conn->query("SELECT type_id, type_name FROM bottle_types ORDER BY type_name ASC");
+        if ($btResult) {
+          while ($row = $btResult->fetch_assoc()) {
+            $bottle_types_list[] = $row;
+          }
+        }
+      }
+    } catch (mysqli_sql_exception $e) {
+      if (strpos($e->getMessage(), 'Duplicate') !== false || strpos($e->getMessage(), 'UNIQUE') !== false) {
+        $error = "Bottle type '" . htmlspecialchars($edit_name) . "' already exists. Please use a different name.";
+      } else {
+        $error = "Error updating bottle type: " . htmlspecialchars($e->getMessage());
+      }
+    }
+    $stmt->close();
+  }
+}
+
+// Handle deleting bottle type
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_bottle_type'])) {
+  $type_id = intval($_POST['type_id'] ?? 0);
+  
+  if (!$type_id) {
+    $error = 'Invalid bottle type.';
+  } else {
+    // Check if bottle type is in use
+    $check = $conn->prepare("SELECT COUNT(*) as cnt FROM deposit WHERE bottle_type = (SELECT type_name FROM bottle_types WHERE type_id = ?)");
+    $check->bind_param("i", $type_id);
+    $check->execute();
+    $result = $check->get_result()->fetch_assoc();
+    $check->close();
+    
+    if ($result['cnt'] > 0) {
+      $error = "Cannot delete this bottle type because it has " . $result['cnt'] . " deposit(s) in use.";
+    } else {
+      $stmt = $conn->prepare("DELETE FROM bottle_types WHERE type_id = ?");
+      $stmt->bind_param("i", $type_id);
+      if ($stmt->execute()) {
+        $msg = "✓ Bottle type deleted successfully!";
+        // Refresh the bottle types list
+        $bottle_types_list = [];
+        $btResult = $conn->query("SELECT type_id, type_name FROM bottle_types ORDER BY type_name ASC");
+        if ($btResult) {
+          while ($row = $btResult->fetch_assoc()) {
+            $bottle_types_list[] = $row;
+          }
+        }
+      } else {
+        $error = "Error deleting bottle type: " . htmlspecialchars($stmt->error);
+      }
+      $stmt->close();
+    }
+  }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_bottle_type'])) {
   $new_type = trim($_POST['new_bottle_type'] ?? '');
-  if ($new_type) {
+  
+  // Validation checks
+  if (!$new_type) {
+    $error = 'Please enter a bottle type name.';
+  } elseif (strlen($new_type) < 3) {
+    $error = 'Bottle type name must be at least 3 characters long.';
+  } elseif (strlen($new_type) > 100) {
+    $error = 'Bottle type name cannot exceed 100 characters.';
+  } else {
     $stmt = $conn->prepare("INSERT INTO bottle_types (type_name, created_by) VALUES (?, ?)");
     $stmt->bind_param("si", $new_type, $user_id);
-    if ($stmt->execute()) {
-      $msg = "Bottle type '$new_type' added successfully!";
-      header("refresh:1");
-    } else {
-      $error = "Error adding bottle type: " . $stmt->error;
+    
+    try {
+      if ($stmt->execute()) {
+        // Refresh the bottle types list
+        $bottle_types_list = [];
+        $btResult = $conn->query("SELECT type_id, type_name FROM bottle_types ORDER BY type_name ASC");
+        if ($btResult) {
+          while ($row = $btResult->fetch_assoc()) {
+            $bottle_types_list[] = $row;
+          }
+        }
+        $msg = "✓ Bottle type '" . htmlspecialchars($new_type) . "' added successfully!";
+      }
+    } catch (mysqli_sql_exception $e) {
+      // Check if error is due to duplicate
+      if (strpos($e->getMessage(), 'Duplicate') !== false || strpos($e->getMessage(), 'UNIQUE') !== false) {
+        $error = "Bottle type '" . htmlspecialchars($new_type) . "' already exists. Please use a different name or select it from the dropdown.";
+      } else {
+        $error = "Error adding bottle type: " . htmlspecialchars($e->getMessage());
+      }
     }
     $stmt->close();
   }
@@ -164,33 +263,61 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
   </div>
 
   <div class="grid" style="margin-top:8px;">
-    <!-- Form -->
     <div class="panel" style="grid-column: span 12;">
       <h3 style="margin-top:0">New Deposit</h3>
-      <?php if($msg): ?><div class="notice"><?=htmlspecialchars($msg)?></div><?php endif; ?>
+      <?php if($msg): ?><div class="notice"><?=$msg?></div><?php endif; ?>
       <?php if($error): ?><div class="error"><?=htmlspecialchars($error)?></div><?php endif; ?>
-      
-      <form method="post" style="max-width:760px" id="depositForm">
-        <div class="bottle-entry" style="border:1px solid #e0e0e0;padding:15px;border-radius:6px;margin-bottom:15px;background:#fafafa;">
-          
+
+      <?php if($is_admin && isset($editRow)): ?>
+        <h3>Edit Deposit #<?= $editRow['deposit_id'] ?></h3>
+        <form method="POST" style="max-width:600px">
+          <input type="hidden" name="edit_id" value="<?= $editRow['deposit_id'] ?>">
           <div class="form-row">
             <div class="col">
               <label>Customer Name</label>
-              <input type="text" name="customer_name" placeholder="Enter customer name">
+              <input type="text" name="customer_name" value="<?=htmlspecialchars($editRow['customer_name'])?>" required>
             </div>
           </div>
-
           <div class="form-row">
             <div class="col">
               <label>Bottle Type</label>
-              <div style="display:flex;gap:8px;align-items:center;">
-                <select name="bottle_type" required style="flex:1;">
-                  <option value="">Select type...</option>
-                  <?php foreach ($bottle_types_list as $type): ?>
-                    <option value="<?= htmlspecialchars($type['type_name']) ?>"><?= htmlspecialchars($type['type_name']) ?></option>
-                  <?php endforeach; ?>
-                </select>
-              </div>
+              <input type="text" name="bottle_type" value="<?=htmlspecialchars($editRow['bottle_type'])?>" required>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="col">
+              <label>Quantity</label>
+              <input type="number" name="quantity" value="<?=htmlspecialchars($editRow['quantity'])?>" min="1" required>
+            </div>
+            <div class="col">
+              <label>Amount</label>
+              <input type="number" step="0.01" min="0" name="amount" placeholder="₱ 0.00" required>
+            </div>
+          </div>
+          <div style="display:flex;gap:12px;margin-top:20px">
+            <button type="submit" class="primary">Save Correction</button>
+            <a href="deposit.php"><button type="button" class="ghost">Cancel</button></a>
+          </div>
+        </form>
+      <?php else: ?>
+      <form method="post" style="max-width:760px" id="depositForm">
+        <div class="bottle-entry" style="border:1px solid #e0e0e0;padding:15px;border-radius:6px;margin-bottom:15px;background:#fafafa;">
+          <div class="form-row">
+            <div class="col">
+              <label>Customer Name</label>
+              <input type="text" name="customer_name" required>
+            </div>
+          </div>
+          
+          <div class="form-row">
+            <div class="col">
+              <label>Bottle Type</label>
+              <select name="bottle_type" required>
+                <option value="">Select a bottle type</option>
+                <?php foreach ($bottle_types_list as $type): ?>
+                  <option value="<?= htmlspecialchars($type['type_name']) ?>"><?= htmlspecialchars($type['type_name']) ?></option>
+                <?php endforeach; ?>
+              </select>
             </div>
             <div class="col">
               <label>Quantity</label>
@@ -216,14 +343,153 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
       <div style="margin-top:30px;padding:15px;background:#e9fbf1;border-radius:6px;border:1px solid #26a69a;">
         <h4 style="color:#2d6a6a;margin-top:0;">Add New Bottle Type</h4>
         <p style="color:#666;font-size:13px;margin-bottom:12px;">Don't see the bottle type you need? Add it here and it will be available for all deposits.</p>
-        <form method="post" style="display:flex;gap:10px;">
-          <input type="text" name="new_bottle_type" placeholder="Enter new bottle type (e.g., Glass Jug, Carton)" required style="flex:1;padding:10px;border:1px solid #26a69a;border-radius:6px;">
-          <button type="submit" name="add_bottle_type" class="primary" style="white-space:nowrap;">Add Type</button>
+        
+        <!-- Show existing types -->
+        <div style="margin-bottom:15px;padding:10px;background:white;border-radius:6px;border:1px solid #ddd;">
+          <p style="color:#2d6a6a;font-weight:600;font-size:12px;margin:0 0 8px 0;">Existing Types:</p>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+            <?php foreach ($bottle_types_list as $type): ?>
+              <div style="background:#26a69a;color:white;padding:5px 10px;border-radius:4px;font-size:12px;font-weight:500;display:flex;gap:6px;align-items:center;">
+                <span><?= htmlspecialchars($type['type_name']) ?></span>
+                <button type="button" class="edit-btn" onclick="editBottleType(<?= $type['type_id'] ?>, '<?= htmlspecialchars(addslashes($type['type_name'])) ?>')" style="background:none;border:none;color:white;cursor:pointer;padding:0;font-size:12px;opacity:0.8;" title="Edit">✎</button>
+                <button type="button" class="delete-btn" onclick="deleteBottleType(<?= $type['type_id'] ?>, '<?= htmlspecialchars(addslashes($type['type_name'])) ?>')" style="background:none;border:none;color:white;cursor:pointer;padding:0;font-size:12px;opacity:0.8;" title="Delete">✕</button>
+              </div>
+            <?php endforeach; ?>
+          </div>
+        </div>
+        
+        <form method="post" style="display:flex;gap:10px;flex-wrap:wrap;" id="addBottleTypeForm">
+          <input 
+            type="text" 
+            name="new_bottle_type" 
+            id="bottleTypeInput"
+            placeholder="Enter new bottle type (e.g., Glass Jug, Carton)" 
+            minlength="3"
+            maxlength="100"
+            style="flex:1;min-width:200px;padding:10px;border:2px solid #26a69a;border-radius:6px;font-family:'Poppins',sans-serif;font-size:14px;transition:all 0.3s ease;"
+            title="Bottle type name must be 3-100 characters. Example: Glass Jug, Carton Box, Aluminum Can">
+          <button type="submit" name="add_bottle_type" class="primary" style="white-space:nowrap;padding:10px 15px;" onclick="return confirmAddBottleType()">Add Type</button>
         </form>
+        
+        <div id="similarWarning" style="margin-top:8px;padding:8px;background:#fff3cd;border-left:3px solid #ffc107;color:#856404;border-radius:4px;display:none;font-size:12px;"></div>
+        
+        <p style="color:#666;font-size:11px;margin-top:8px;">
+          <strong>Requirements:</strong> 3-100 characters, no duplicates allowed
+        </p>
       </div>
 
 
       <script>
+      // Existing bottle types from PHP
+      const existingTypes = [
+        <?php foreach ($bottle_types_list as $type) { 
+          echo "'" . addslashes($type['type_name']) . "',"; 
+        } ?>
+      ];
+
+      // Edit bottle type
+      function editBottleType(typeId, typeName) {
+        const newName = prompt('Edit bottle type name:', typeName);
+        if (newName !== null && newName.trim()) {
+          const form = document.createElement('form');
+          form.method = 'POST';
+          form.innerHTML = `
+            <input type="hidden" name="type_id" value="${typeId}">
+            <input type="hidden" name="edit_bottle_name" value="${newName.trim()}">
+            <input type="hidden" name="edit_bottle_type" value="1">
+          `;
+          document.body.appendChild(form);
+          form.submit();
+          document.body.removeChild(form);
+        }
+      }
+
+      // Delete bottle type
+      function deleteBottleType(typeId, typeName) {
+        if (confirm('Delete bottle type "' + typeName + '"?\n\nThis action cannot be undone.')) {
+          const form = document.createElement('form');
+          form.method = 'POST';
+          form.innerHTML = `
+            <input type="hidden" name="type_id" value="${typeId}">
+            <input type="hidden" name="delete_bottle_type" value="1">
+          `;
+          document.body.appendChild(form);
+          form.submit();
+          document.body.removeChild(form);
+        }
+      }
+
+      // Calculate similarity score between two strings
+      function calculateSimilarity(str1, str2) {
+        str1 = str1.toLowerCase().trim();
+        str2 = str2.toLowerCase().trim();
+        
+        if (str1 === str2) return 100;
+        
+        let matches = 0;
+        let maxLen = Math.max(str1.length, str2.length);
+        
+        for (let i = 0; i < maxLen; i++) {
+          if (str1[i] === str2[i]) matches++;
+        }
+        
+        return (matches / maxLen) * 100;
+      }
+
+      // Check for similar types as user types
+      document.getElementById('bottleTypeInput').addEventListener('input', function() {
+        const input = this.value.trim();
+        const warningDiv = document.getElementById('similarWarning');
+        
+        if (!input) {
+          warningDiv.style.display = 'none';
+          return;
+        }
+        
+        // Find similar types
+        let similar = [];
+        existingTypes.forEach(type => {
+          const similarity = calculateSimilarity(input, type);
+          if (similarity >= 70 && similarity < 100) {
+            similar.push({ name: type, score: similarity });
+          }
+        });
+        
+        // Show warning if similar types found
+        if (similar.length > 0) {
+          similar.sort((a, b) => b.score - a.score);
+          let message = '⚠️ Similar type(s) found: <strong>' + similar.map(s => s.name).join(', ') + '</strong><br>Did you mean one of these? Check the list above.';
+          warningDiv.innerHTML = message;
+          warningDiv.style.display = 'block';
+        } else {
+          warningDiv.style.display = 'none';
+        }
+      });
+
+      // Confirm before adding
+      function confirmAddBottleType() {
+        const input = document.getElementById('bottleTypeInput').value.trim();
+        
+        if (!input) {
+          alert('Please enter a bottle type name.');
+          return false;
+        }
+        
+        if (input.length < 3) {
+          alert('Bottle type must be at least 3 characters.');
+          return false;
+        }
+        
+        // Check for exact duplicate
+        if (existingTypes.some(type => type.toLowerCase() === input.toLowerCase())) {
+          alert('This bottle type already exists!\n\nPlease check the list above or use a different name.');
+          return false;
+        }
+        
+        // Confirm addition
+        return confirm('Add new bottle type: "' + input + '"?\n\nThis will be available for all deposits.');
+      }
+
       function toggleSidebar(){
         document.querySelector('.sidebar').classList.toggle('show');
         document.querySelector('.sidebar-overlay').classList.toggle('show');
@@ -232,41 +498,7 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
       </script>
     </div>
   </div>
-  
-  <?php if ($is_admin && isset($editRow)): ?>
-  <div class="panel" style="margin-top:20px;">
-    <h3>Edit Deposit #<?= $editRow['deposit_id'] ?></h3>
-    <form method="POST" style="max-width:600px">
-      <input type="hidden" name="edit_id" value="<?= $editRow['deposit_id'] ?>">
-      <div class="form-row">
-        <div class="col">
-          <label>Customer Name</label>
-          <input type="text" name="customer_name" value="<?=htmlspecialchars($editRow['customer_name'])?>" required>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="col">
-          <label>Bottle Type</label>
-          <input type="text" name="bottle_type" value="<?=htmlspecialchars($editRow['bottle_type'])?>" required>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="col">
-          <label>Quantity</label>
-          <input type="number" name="quantity" value="<?=htmlspecialchars($editRow['quantity'])?>" min="1" required>
-        </div>
-        <div class="col">
-          <label>Amount</label>
-          <input type="number" step="0.01" min="0" name="amount" placeholder="₱ 0.00" required>
-        </div>
-      </div>
-      <div style="display:flex;gap:12px;margin-top:20px">
-        <button type="submit" class="primary">Save Correction</button>
-        <a href="deposit.php"><button type="button" class="ghost">Cancel</button></a>
-      </div>
-    </form>
-  </div>
-  <?php endif; ?>
+      <?php endif; ?>
 
   </div>
 
