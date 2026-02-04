@@ -2,7 +2,7 @@
 $host = "localhost";
 $user = "root";      // change if your MySQL username is different
 $pass = "";          // change if your MySQL password is set
-$db   = "upgrade";
+$db   = "bottlebank";
 
 $conn = mysqli_connect($host, $user, $pass, $db);
 if (!$conn) {

@@ -71,7 +71,7 @@ if ($page > $total_pages) $page = $total_pages;
 
 // Get records with pagination
 $offset = ($page - 1) * $per_page;
-$data_sql = "SELECT log_id, action_type, customer_name, bottle_type, quantity, amount, date_logged FROM stock_log " . $where_sql . " ORDER BY date_logged DESC LIMIT ?, ?";
+$data_sql = "SELECT log_id, action_type, customer_name, bottle_type, quantity, amount, with_case, case_quantity, date_logged FROM stock_log " . $where_sql . " ORDER BY date_logged DESC LIMIT ?, ?";
 $stmt = $conn->prepare($data_sql);
 
 // Bind with offset and limit
@@ -200,7 +200,7 @@ $stmt->close();
 
     <table>
         <thead>
-            <tr><th>ID</th><th>Action</th><th>Customer</th><th>Bottle</th><th>Quantity</th><th>Amount</th><th>Date</th></tr>
+            <tr><th>ID</th><th>Action</th><th>Customer</th><th>Bottle</th><th>Qty</th><th>With Case</th><th>Cases</th><th>Amount</th><th>Date</th></tr>
         </thead>
         <tbody>
         <?php if($result && $result->num_rows): while($row = $result->fetch_assoc()): ?>
@@ -210,11 +210,13 @@ $stmt->close();
                 <td><?= htmlspecialchars(!empty($row['customer_name']) ? $row['customer_name'] : 'N/A') ?></td>
                 <td><?= htmlspecialchars(!empty($row['bottle_type']) ? $row['bottle_type'] : 'N/A') ?></td>
                 <td><?= htmlspecialchars(!empty($row['quantity']) ? $row['quantity'] : 'N/A') ?></td>
-                <td><?= htmlspecialchars(!empty($row['amount']) ? $row['amount'] : 'N/A') ?></td>
+                <td><?= ($row['with_case'] ? '✓ Yes' : '✗ No') ?></td>
+                <td><?= htmlspecialchars(!empty($row['case_quantity']) ? $row['case_quantity'] : '0') ?></td>
+                <td><?= htmlspecialchars(!empty($row['amount']) ? '₱' . $row['amount'] : 'N/A') ?></td>
                 <td><?= htmlspecialchars($row['date_logged']) ?></td>
             </tr>
         <?php endwhile; else: ?>
-            <tr><td colspan="7">No records found.</td></tr>
+            <tr><td colspan="9">No records found.</td></tr>
         <?php endif; ?>
         </tbody>
     </table>

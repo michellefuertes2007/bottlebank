@@ -146,13 +146,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['edit_id']) && !isset
   } elseif (!$bottle_type) {
     $error = 'Please select a bottle type.';
   } else {
+    // Get case information from form
+    $with_case = isset($_POST['with_case']) ? 1 : 0;
+    $case_quantity = isset($_POST['case_quantity']) ? intval($_POST['case_quantity']) : 0;
+    // If user indicated there is a case but left quantity empty or zero, default to 1
+    if ($with_case && $case_quantity <= 0) {
+      $case_quantity = 1;
+    }
+    
     // insert single deposit
-    $ins = $conn->prepare("INSERT INTO deposit (user_id, customer_name, bottle_type, quantity, deposit_date) VALUES (?, ?, ?, ?, NOW())");
-    $ins->bind_param("issi", $user_id, $customer_name, $bottle_type, $quantity);
+    $ins = $conn->prepare("INSERT INTO deposit (user_id, customer_name, bottle_type, quantity, with_case, case_quantity, deposit_date) VALUES (?, ?, ?, ?, ?, ?, NOW())");
+    $ins->bind_param("issiii", $user_id, $customer_name, $bottle_type, $quantity, $with_case, $case_quantity);
     if ($ins->execute()) {
-      // insert stock_log
-      $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, amount) VALUES (?, 'Deposit', ?, ?, ?, ?)");
-      $log->bind_param("issii", $user_id, $customer_name, $bottle_type, $quantity, $amount);
+      // insert stock_log with formatted details including case info
+      $details = "Deposit — " . $quantity . " bottles (" . $bottle_type . ")";
+      if ($with_case && $case_quantity > 0) {
+        $details .= " with " . $case_quantity . " case" . ($case_quantity > 1 ? "s" : "");
+      }
+      $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, amount, details, with_case, case_quantity) VALUES (?, 'Deposit', ?, ?, ?, ?, ?, ?, ?)");
+      $log->bind_param("issidsii", $user_id, $customer_name, $bottle_type, $quantity, $amount, $details, $with_case, $case_quantity);
       $log->execute(); 
       $log->close();
       $msg = 'Deposit recorded successfully!';
@@ -330,6 +342,20 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
               <label>Amount (optional)</label>
               <input type="number" step="0.01" name="amount" min="0" placeholder="₱ 0.00">
             </div>
+            <div class="col">
+              <label>With Case?</label>
+              <div style="display:flex;gap:10px;align-items:center;height:40px;border:1px solid #ddd;border-radius:6px;padding:10px;background:#f9f9f9;">
+                <input type="checkbox" name="with_case" id="with_case" style="width:18px;height:18px;cursor:pointer;margin:0;">
+                <label for="with_case" style="margin:0;cursor:pointer;font-weight:500;flex:1;">Include case with deposit</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-row" id="caseQuantityRow" style="display:none;">
+            <div class="col">
+              <label>Number of Cases</label>
+              <input type="number" name="case_quantity" id="case_quantity" min="0" placeholder="0" value="0">
+            </div>
           </div>
         </div>
 
@@ -380,6 +406,27 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
 
 
       <script>
+      // Handle "With Case?" checkbox toggle
+      const withCaseCheckbox = document.getElementById('with_case');
+      const caseQuantityRow = document.getElementById('caseQuantityRow');
+      const caseQuantityInput = document.getElementById('case_quantity');
+
+      if (withCaseCheckbox) {
+        // Show/hide case quantity input based on checkbox and set sensible defaults
+        withCaseCheckbox.addEventListener('change', function() {
+          if (this.checked) {
+            caseQuantityRow.style.display = 'flex';
+            caseQuantityInput.value = '1';
+            caseQuantityInput.required = true;
+            caseQuantityInput.focus();
+          } else {
+            caseQuantityRow.style.display = 'none';
+            caseQuantityInput.value = '0';
+            caseQuantityInput.required = false;
+          }
+        });
+      }
+
       // Existing bottle types from PHP
       const existingTypes = [
         <?php foreach ($bottle_types_list as $type) { 

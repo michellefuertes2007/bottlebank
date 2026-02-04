@@ -29,12 +29,21 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
   } elseif (!$bottle_type) {
     $error = 'Please select a bottle type.';
   } else {
-    $stmt = $conn->prepare("INSERT INTO returns (user_id, customer_name, bottle_type, quantity, return_date) VALUES (?, ?, ?, ?, NOW())");
-    $stmt->bind_param('sisi', $user_id, $customer_name, $bottle_type, $quantity);
+    // Get case information from form
+    $with_case = isset($_POST['with_case']) ? 1 : 0;
+    $case_quantity = isset($_POST['case_quantity']) ? intval($_POST['case_quantity']) : 0;
+    // If with_case is checked but user didn't provide a case count, default to 1
+    if ($with_case && $case_quantity <= 0) {
+      $case_quantity = 1;
+    }
+    
+    $stmt = $conn->prepare("INSERT INTO returns (user_id, customer_name, bottle_type, quantity, with_case, case_quantity, return_date) VALUES (?, ?, ?, ?, ?, ?, NOW())");
+    $stmt->bind_param('issiii', $user_id, $customer_name, $bottle_type, $quantity, $with_case, $case_quantity);
     if ($stmt->execute()) {
-      // log
-      $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, details) VALUES (?, 'Return', ?, ?, ?, 'Successfully recorded')");
-      $log->bind_param('issi', $user_id, $customer_name, $bottle_type, $quantity);
+      // log with details
+      $details = "Return — " . $quantity . " bottles (" . $bottle_type . ")";
+      $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, details, with_case, case_quantity) VALUES (?, 'Return', ?, ?, ?, ?, ?, ?)");
+      $log->bind_param('isssiii', $user_id, $customer_name, $bottle_type, $quantity, $details, $with_case, $case_quantity);
       $log->execute(); $log->close();
       $msg = 'Return recorded!';
       // Redirect to index after 1 second
@@ -205,6 +214,19 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] == "POST" && isset($_POST['edit_id']
               <input type="number" name="quantity" min="1" placeholder="Number of bottles" required>
             </div>
           </div>
+          <div class="form-row">
+            <div class="col" style="flex:0.5;">
+              <label>With Case?</label>
+              <div style="display:flex;gap:10px;align-items:center;height:40px;border:1px solid #ddd;border-radius:6px;padding:10px;background:#f9f9f9;">
+                <input type="checkbox" name="with_case" id="with_case" style="width:18px;height:18px;cursor:pointer;margin:0;">
+                <label for="with_case" style="margin:0;cursor:pointer;font-weight:500;font-size:13px;">Include case</label>
+              </div>
+            </div>
+            <div class="col" style="flex:0.5;" id="caseQuantityCol" style="display:none;">
+              <label>Number of Cases</label>
+              <input type="number" name="case_quantity" id="case_quantity" min="0" placeholder="0" value="0">
+            </div>
+          </div>
           <div style="display:flex;gap:12px;margin-top:20px">
             <button type="submit" class="primary">Record Return</button>
             <a href="index.php"><button type="button" class="ghost">Cancel</button></a>
@@ -216,6 +238,27 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] == "POST" && isset($_POST['edit_id']
 </div>
 
 <script>
+// Handle "With Case?" checkbox toggle
+const withCaseCheckbox = document.getElementById('with_case');
+const caseQuantityCol = document.getElementById('caseQuantityCol');
+const caseQuantityInput = document.getElementById('case_quantity');
+
+if (withCaseCheckbox) {
+  // Show/hide case quantity input based on checkbox and set sensible defaults
+  withCaseCheckbox.addEventListener('change', function() {
+    if (this.checked) {
+      caseQuantityCol.style.display = 'flex';
+      caseQuantityInput.value = '1';
+      caseQuantityInput.required = true;
+      caseQuantityInput.focus();
+    } else {
+      caseQuantityCol.style.display = 'none';
+      caseQuantityInput.value = '0';
+      caseQuantityInput.required = false;
+    }
+  });
+}
+
 function toggleSidebar(){
   const sidebar = document.querySelector('.sidebar');
   const overlay = document.querySelector('.sidebar-overlay');

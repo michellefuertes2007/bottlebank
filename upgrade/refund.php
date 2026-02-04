@@ -25,9 +25,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
         $stmt = $conn->prepare("INSERT INTO refund (user_id, customer_name, amount, refund_date) VALUES (?, ?, ?, NOW())");
         $stmt->bind_param('isd', $user_id, $cust_name, $amount);
         if ($stmt->execute()) {
-            // log the refund
-            $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, amount, details) VALUES (?, 'Refund', ?, ?, 'Successfully recorded')");
-            $log->bind_param('isd', $user_id, $cust_name, $amount);
+            // log the refund with details
+            $details = "Refund — ₱" . number_format($amount, 2);
+            $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, amount, details) VALUES (?, 'Refund', ?, ?, ?)");
+            $log->bind_param('isds', $user_id, $cust_name, $amount, $details);
             $log->execute();
             $log->close();
             $msg = 'Refund recorded!';
