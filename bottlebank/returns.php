@@ -58,7 +58,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
 // Admin edit handling
 if ($is_admin && isset($_GET['edit_id'])) {
   $edit_id = intval($_GET['edit_id']);
-  $e = $conn->prepare("SELECT return_id, customer_name, bottle_type, quantity FROM returns WHERE return_id = ?");
+  $e = $conn->prepare("SELECT return_id, customer_name, bottle_type, quantity, with_case, case_quantity FROM returns WHERE return_id = ?");
   $e->bind_param('i', $edit_id);
   $e->execute();
   $editRow = $e->get_result()->fetch_assoc();
@@ -74,15 +74,20 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] == "POST" && isset($_POST['edit_id']
   $new_customer = trim($_POST['customer_name'] ?? '');
   $new_type = trim($_POST['bottle_type'] ?? '');
   $new_qty = intval($_POST['quantity'] ?? 0);
+  $new_with_case = isset($_POST['with_case']) ? 1 : 0;
+  $new_case_quantity = isset($_POST['case_quantity']) ? intval($_POST['case_quantity']) : 0;
+  if ($new_with_case && $new_case_quantity <= 0) {
+    $new_case_quantity = 1;
+  }
 
   if ($new_qty <= 0) {
     $error = 'Quantity must be greater than zero.';
   } else {
-    $u = $conn->prepare("UPDATE returns SET customer_name=?, bottle_type=?, quantity=? WHERE return_id=?");
-    $u->bind_param('ssii', $new_customer, $new_type, $new_qty, $edit_id);
+    $u = $conn->prepare("UPDATE returns SET customer_name=?, bottle_type=?, quantity=?, with_case=?, case_quantity=? WHERE return_id=?");
+    $u->bind_param('ssiiiii', $new_customer, $new_type, $new_qty, $new_with_case, $new_case_quantity, $edit_id);
     if ($u->execute()) {
-      $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity) VALUES (?, 'Return Correction', ?, ?, ?)");
-      $log->bind_param('issi', $user_id, $new_customer, $new_type, $new_qty);
+      $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, with_case, case_quantity) VALUES (?, 'Return Correction', ?, ?, ?, ?, ?)");
+      $log->bind_param('issiii', $user_id, $new_customer, $new_type, $new_qty, $new_with_case, $new_case_quantity);
       $log->execute(); $log->close();
       $msg = 'Return updated!';
       unset($editRow);
@@ -118,6 +123,11 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] == "POST" && isset($_POST['edit_id']
     .error { padding:12px 15px; background:#ffecec; border-left:4px solid #ef5350; border-radius:6px; margin-bottom:15px; color:#c62828; font-weight:500; }
     .toggle-sidebar { background:none; border:none; font-size:18px; cursor:pointer; color:#2d6a6a; font-weight:600; display:none; transition:0.3s; }
     @media (max-width:768px) { .toggle-sidebar { display:block; } }
+    /* Shared field box style used for With Case and Number of Cases */
+    .field-label { display:block; margin-bottom:6px; font-weight:600; color:#333; }
+    .field-box { display:flex; gap:10px; align-items:center; height:40px; border:1px solid #ddd; border-radius:6px; padding:10px; background:#f9f9f9; width:100%; }
+    .field-stack { display:flex; flex-direction:column; }
+    .field-box input[type="number"] { width:60px; border:none; background:transparent; padding:6px; font-size:14px; text-align:center; }
   </style>
 </head>
 <body>
@@ -182,6 +192,20 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] == "POST" && isset($_POST['edit_id']
               <input type="number" name="quantity" value="<?=htmlspecialchars($editRow['quantity'])?>" min="1" required>
             </div>
           </div>
+          <div class="form-row">
+            <div class="col field-stack">
+              <label class="field-label">With Case?</label>
+              <div class="field-box">
+                <input type="checkbox" name="with_case" id="with_case_edit" style="width:18px;height:18px;cursor:pointer;margin:0;" <?= ($editRow['with_case'] ?? 0) ? 'checked' : '' ?>>
+              </div>
+            </div>
+            <div class="col field-stack" id="caseQuantityColEdit" style="display:<?= ($editRow['with_case'] ?? 0) ? 'block' : 'none' ?>;">
+              <label class="field-label">Number of Cases</label>
+              <div class="field-box">
+                <input type="number" name="case_quantity" id="case_quantity_edit" min="0" placeholder="0" value="<?=htmlspecialchars($editRow['case_quantity'] ?? 0)?>">
+              </div>
+            </div>
+          </div>
           <div style="display:flex;gap:12px;margin-top:20px">
             <button type="submit" class="primary">Save Correction</button>
             <a href="returns.php"><button type="button" class="ghost">Cancel</button></a>
@@ -215,16 +239,17 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] == "POST" && isset($_POST['edit_id']
             </div>
           </div>
           <div class="form-row">
-            <div class="col" style="flex:0.5;">
-              <label>With Case?</label>
-              <div style="display:flex;gap:10px;align-items:center;height:40px;border:1px solid #ddd;border-radius:6px;padding:10px;background:#f9f9f9;">
+            <div class="col field-stack" style="flex:0.5;">
+              <label class="field-label">With Case?</label>
+              <div class="field-box">
                 <input type="checkbox" name="with_case" id="with_case" style="width:18px;height:18px;cursor:pointer;margin:0;">
-                <label for="with_case" style="margin:0;cursor:pointer;font-weight:500;font-size:13px;">Include case</label>
               </div>
             </div>
-            <div class="col" style="flex:0.5;" id="caseQuantityCol" style="display:none;">
-              <label>Number of Cases</label>
-              <input type="number" name="case_quantity" id="case_quantity" min="0" placeholder="0" value="0">
+            <div class="col field-stack" style="flex:0.5; display:none;" id="caseQuantityCol">
+              <label class="field-label">Number of Cases</label>
+              <div class="field-box">
+                <input type="number" name="case_quantity" id="case_quantity" min="0" placeholder="0" value="0">
+              </div>
             </div>
           </div>
           <div style="display:flex;gap:12px;margin-top:20px">
@@ -247,16 +272,40 @@ if (withCaseCheckbox) {
   // Show/hide case quantity input based on checkbox and set sensible defaults
   withCaseCheckbox.addEventListener('change', function() {
     if (this.checked) {
-      caseQuantityCol.style.display = 'flex';
+      if (caseQuantityCol) caseQuantityCol.style.display = 'flex';
       caseQuantityInput.value = '1';
       caseQuantityInput.required = true;
       caseQuantityInput.focus();
     } else {
-      caseQuantityCol.style.display = 'none';
+      if (caseQuantityCol) caseQuantityCol.style.display = 'none';
       caseQuantityInput.value = '0';
       caseQuantityInput.required = false;
     }
   });
+}
+
+// Toggle the submit button into the green notice when checkbox is checked
+// (No-op) submit button stays in original place; notice UI was removed.
+
+// Handle "With Case?" checkbox toggle for EDIT form
+const withCaseCheckboxEdit = document.getElementById('with_case_edit');
+const caseQuantityColEdit = document.getElementById('caseQuantityColEdit');
+const caseQuantityInputEdit = document.getElementById('case_quantity_edit');
+
+if (withCaseCheckboxEdit) {
+  withCaseCheckboxEdit.addEventListener('change', function() {
+    if (this.checked) {
+      caseQuantityColEdit.style.display = 'block';
+      caseQuantityInputEdit.required = true;
+      caseQuantityInputEdit.focus();
+    } else {
+      caseQuantityColEdit.style.display = 'none';
+      caseQuantityInputEdit.value = '0';
+      caseQuantityInputEdit.required = false;
+    }
+  });
+} else {
+  console.log('Edit form checkbox NOT found');
 }
 
 function toggleSidebar(){

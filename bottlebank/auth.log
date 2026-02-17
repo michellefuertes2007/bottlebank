@@ -16,3 +16,8 @@
 [2026-02-01 21:32:42] [127.0.0.1] LOGIN FAILED: user not found user=admin_test
 [2026-02-01 21:33:02] [127.0.0.1] LOGIN SUCCESS: user=user_test1 id=48
 [2026-02-04 17:06:16] [127.0.0.1] LOGIN SUCCESS: user=justin id=2
+[2026-02-15 19:35:47] [127.0.0.1] LOGIN FAILED: user not found user=admin#1
+[2026-02-15 19:37:47] [127.0.0.1] LOGIN SUCCESS: user=admin1 id=3
+[2026-02-15 19:38:21] [127.0.0.1] LOGIN SUCCESS: user=admin1 id=3
+[2026-02-16 18:56:17] [127.0.0.1] LOGIN SUCCESS: user=admin1 id=3
+[2026-02-17 17:40:49] [127.0.0.1] LOGIN SUCCESS: user=admin1 id=3

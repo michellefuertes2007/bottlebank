@@ -732,6 +732,8 @@ $logs = $conn->query("SELECT * FROM stock_log WHERE user_id=$uid ORDER BY date_l
 <th>Customer</th>
 <th>Bottle Type</th>
 <th>Qty</th>
+<th>With Case</th>
+<th>Case Qty</th>
 <th>Amount</th>
 <th>Date</th>
 </tr>
@@ -742,6 +744,8 @@ $logs = $conn->query("SELECT * FROM stock_log WHERE user_id=$uid ORDER BY date_l
 <td><?= !empty($l['customer_name']) ? htmlspecialchars($l['customer_name']) : '<span style="color: #999;">N/A</span>' ?></td>
 <td><?= !empty($l['bottle_type']) ? htmlspecialchars($l['bottle_type']) : '<span style="color: #999;">N/A</span>' ?></td>
 <td><?= !empty($l['quantity']) && $l['quantity'] > 0 ? $l['quantity'] : '<span style="color: #999;">N/A</span>' ?></td>
+<td><?= isset($l['with_case']) && $l['with_case'] ? '<strong>Yes</strong>' : '<span style="color: #999;">No</span>' ?></td>
+<td><?= isset($l['case_quantity']) && $l['case_quantity'] > 0 ? $l['case_quantity'] : '<span style="color: #999;">0</span>' ?></td>
 <td><?= !empty($l['amount']) && $l['amount'] > 0 ? '₱' . number_format($l['amount'], 2) : '<span style="color: #999;">N/A</span>' ?></td>
 <td><?= date("M d, Y - h:i A", strtotime($l['date_logged'])) ?></td>
 </tr>
