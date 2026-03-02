@@ -21,3 +21,13 @@
 [2026-02-15 19:38:21] [127.0.0.1] LOGIN SUCCESS: user=admin1 id=3
 [2026-02-16 18:56:17] [127.0.0.1] LOGIN SUCCESS: user=admin1 id=3
 [2026-02-17 17:40:49] [127.0.0.1] LOGIN SUCCESS: user=admin1 id=3
+[2026-02-26 08:00:29] [127.0.0.1] LOGIN SUCCESS: user=admin1 id=3
+[2026-02-28 22:16:55] [127.0.0.1] LOGIN SUCCESS: user=admin1 id=3
+[2026-03-01 09:49:31] [127.0.0.1] LOGIN SUCCESS: user=justin id=2
+[2026-03-01 09:51:17] [127.0.0.1] LOGIN SUCCESS: user=ramo id=3
+[2026-03-01 19:03:07] [127.0.0.1] LOGIN FAILED: invalid password for user=ramo
+[2026-03-01 19:03:31] [127.0.0.1] LOGIN FAILED: invalid password for user=ramo
+[2026-03-01 19:04:25] [127.0.0.1] LOGIN SUCCESS: user=zae id=4
+[2026-03-01 19:36:55] [127.0.0.1] LOGIN SUCCESS: user=zae id=4
+[2026-03-01 20:00:28] [127.0.0.1] LOGIN SUCCESS: user=admin id=1
+[2026-03-02 04:27:53] [127.0.0.1] LOGIN SUCCESS: user=admin id=1

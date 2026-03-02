@@ -1,12 +1,24 @@
 <?php
 session_start();
 require '../includes/db_connect.php';
+// lightweight migration helper for early pages
+function ensureColumn($conn, $table, $column, $definition) {
+    $res = $conn->query("SHOW COLUMNS FROM `$table` LIKE '$column'");
+    if(!$res || $res->num_rows === 0) {
+        $conn->query("ALTER TABLE `$table` ADD COLUMN $definition");
+    }
+}
+// stock_log may not yet have size field on older installations
+ensureColumn($conn, 'stock_log', 'bottle_size', "bottle_size VARCHAR(10) DEFAULT 'small'");
 
 // Only admin can access
 if (!isset($_SESSION['user_id'])) {
     header("Location: ../login.php");
     exit();
 }
+
+// ensure email column exists (migration helper)
+ensureColumn($conn, 'user', 'email', "email VARCHAR(100) NOT NULL DEFAULT '' UNIQUE");
 
 // Check if the logged-in user is admin
 $stmt = $conn->prepare("SELECT username, role FROM user WHERE user_id = ?");
@@ -25,7 +37,7 @@ if ($user['role'] !== 'admin') {
 }
 
 // =====================
-// Handle User Updates
+// Handle User Updates and Creation
 // =====================
 // Ensure `force_change` column exists
 $colCheck = $conn->query("SHOW COLUMNS FROM user LIKE 'force_change'");
@@ -33,7 +45,39 @@ if ($colCheck->num_rows === 0) {
     $conn->query("ALTER TABLE user ADD COLUMN force_change TINYINT(1) NOT NULL DEFAULT 0");
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_user'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_user'])) {
+    // create new regular user
+    $new_username = trim($_POST['username'] ?? '');
+    $new_email    = trim($_POST['email'] ?? '');
+    $new_password = $_POST['password'] ?? '';
+    $confirm_pass= $_POST['confirm_password'] ?? '';
+    if (!$new_username || !$new_password || !$new_email) {
+        $msg = 'Username, email and password are required.';
+    } elseif ($new_password !== $confirm_pass) {
+        $msg = 'Passwords do not match.';
+    } else {
+        // make sure username and email are unique
+        $check = $conn->prepare("SELECT user_id FROM user WHERE username = ? OR email = ?");
+        $check->bind_param("ss", $new_username, $new_email);
+        $check->execute();
+        $check->store_result();
+        if ($check->num_rows > 0) {
+            $msg = 'Username or email already in use.';
+        } else {
+            $hash = password_hash($new_password, PASSWORD_DEFAULT);
+            // include email field when creating users; table schema requires it
+            $stmt = $conn->prepare("INSERT INTO user (username, email, password, role) VALUES (?, ?, ?, 'user')");
+            $stmt->bind_param("sss", $new_username, $new_email, $hash);
+            if ($stmt->execute()) {
+                $msg = "New user '$new_username' added.";
+            } else {
+                $msg = 'Failed to create user: ' . $stmt->error;
+            }
+            $stmt->close();
+        }
+        $check->close();
+    }
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_user'])) {
     $edit_user_id = intval($_POST['edit_user_id']);
     $new_username = trim($_POST['username']);
     $new_email    = trim($_POST['email']);
@@ -97,9 +141,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_user'])) {
 // Fetch all users with pagination (5 per page)
 // =====================
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
-$page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
-$per_page = 5;
-$offset = ($page - 1) * $per_page;
+ $page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+ $per_page = isset($_GET['per_page']) && in_array((int)$_GET['per_page'], [5,10,20]) ? (int)$_GET['per_page'] : 5;
+ $offset = ($page - 1) * $per_page;
 
 $query = "SELECT * FROM user ORDER BY role DESC, created_at DESC LIMIT $offset, $per_page";
 $count_query = "SELECT COUNT(*) as total FROM user";
@@ -129,6 +173,7 @@ $total_pages = ceil($total_users / $per_page);
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Admin Panel | BottleBank</title>
+<link rel="stylesheet" href="../asset/style.css">
 <style>
 * {
   margin: 0;
@@ -138,30 +183,17 @@ $total_pages = ceil($total_users / $per_page);
 
 html, body {
   width: 100%;
-  height: 100%;
 }
-
 
 body {
   font-family: 'Poppins', 'Segoe UI', sans-serif;
   background: #f0f7f7;
   color: #333;
   display: flex;
-  height: 100vh;
 }
 
-.sidebar {
-  width: 250px;
-  background: linear-gradient(135deg, #2d6a6a 0%, #1e4a4a 100%);
-  color: white;
-  padding: 20px;
-  overflow-y: auto;
-  box-shadow: 2px 0 8px rgba(0,0,0,0.15);
-  position: fixed;
-  height: 100vh;
-  left: 0;
-  top: 0;
-}
+/* sidebar styles are provided by asset/style.css to ensure
+   responsive show/hide behaviour; avoid redeclaring them here */
 
 .sidebar h2 {
   color: white;
@@ -172,42 +204,27 @@ body {
   text-align: center;
 }
 
-.sidebar-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
 
-.sidebar-nav a {
-  padding: 12px 16px;
-  color: white;
-  text-decoration: none;
-  border-radius: 6px;
-  transition: all 0.3s ease;
-  cursor: pointer;
-}
-
-.sidebar-nav a:hover {
-  background: rgba(255,255,255,0.1);
-  padding-left: 20px;
-}
-
-.sidebar-nav a.active {
-  background: #26a69a;
-  font-weight: 600;
-}
 
 .main-content {
-  margin-left: 250px;
   flex: 1;
   overflow-y: auto;
   padding: 20px;
+  /* margin-left omitted so mobile media query in asset/style.css can take effect */
 }
 
 .container {
   width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
   padding: 20px;
   background: transparent;
+}
+
+/* ensure margin-left resets on narrow screens */
+@media (max-width: 768px) {
+  .container, .app { margin-left: 0 !important; }
+  /* sidebar positioning handled by global stylesheet */
 }
 
 h1 {
@@ -288,9 +305,8 @@ tr:hover {
 .button {
   display: inline-block;
   padding: 8px 14px;
-  background: #26a69a;
-  color: #fff;
-  text-decoration: none;
+  min-width: 100px;
+  text-align: center;
   border-radius: 6px;
   font-size: 12px;
   font-weight: 600;
@@ -423,183 +439,97 @@ form button:hover {
   margin-top: 30px;
 }
 
-/* Responsive Design */
-@media (max-width: 768px) {
-  .sidebar {
-    width: 100%;
-    height: auto;
-    position: relative;
-    padding: 15px;
-  }
-
-  .main-content {
-    margin-left: 0;
-  }
-
-  body {
-    flex-direction: column;
-    height: auto;
-  }
-
-  .sidebar-nav {
-    flex-direction: row;
-    flex-wrap: wrap;
-  }
-
-  .sidebar-nav a {
-    flex: 1;
-    min-width: 120px;
-    padding: 10px 12px;
-    font-size: 12px;
-    text-align: center;
-  }
-
-  .container {
-    padding: 15px;
-  }
-
-  h1 {
-    font-size: 22px;
-    margin-bottom: 20px;
-  }
-
-  h2 {
-    font-size: 18px;
-  }
-
-  h3 {
-    font-size: 16px;
-  }
-
-  th, td {
-    padding: 8px 10px;
-    font-size: 12px;
-  }
-
-  .button {
-    padding: 6px 10px;
-    font-size: 11px;
-    margin-right: 4px;
-    margin-bottom: 4px;
-  }
-
-  form input,
-  form select,
-  form textarea {
-    padding: 8px 10px;
-    font-size: 13px;
-  }
-
-  form button {
-    padding: 8px 12px;
-    font-size: 13px;
-  }
-
-  .action-buttons {
-    flex-direction: column;
-  }
-
-  .action-buttons .button {
-    display: block;
-    width: 100%;
-    text-align: center;
-    margin-right: 0;
-    margin-bottom: 6px;
-  }
-
-  .stats {
-    grid-template-columns: 1fr;
-  }
-
-  table {
-    font-size: 12px;
-  }
-
-  table th,
-  table td {
-    padding: 8px;
-  }
-}
-
-@media (max-width: 480px) {
-  .container {
-    padding: 12px;
-    margin: 5px;
-    border-radius: 8px;
-  }
-
-  h1 {
-    font-size: 18px;
-    margin-bottom: 15px;
-  }
-
-  h2 {
-    font-size: 16px;
-    margin-top: 20px;
-  }
-
-  h3 {
-    font-size: 14px;
-  }
-
-  th, td {
-    padding: 6px 8px;
-    font-size: 11px;
-  }
-
-  .button {
-    padding: 5px 8px;
-    font-size: 10px;
-  }
-
-  form input,
-  form select,
-  form textarea {
-    padding: 8px;
-    font-size: 12px;
-  }
-
-  table {
-    overflow-x: auto;
-  }
-
-  .stat-card {
-    padding: 12px;
-  }
-
-  .stat-card .value {
-    font-size: 20px;
-  }
-}
+/* most responsive behaviour is handled by asset/style.css */
 </style>
+<script>
+// early definition so inline onclicks work
+function toggleSidebar(){
+  const sidebar = document.querySelector('.sidebar');
+  const overlay = document.querySelector('.sidebar-overlay');
+  if(sidebar) sidebar.classList.toggle('active');
+  if(overlay) overlay.classList.toggle('active');
+}
+</script>
 </head>
 <body>
+<div class="sidebar-overlay" onclick="toggleSidebar()"></div>
 
 <div class="sidebar">
-  <h2>Admin Panel</h2>
-  <div class="sidebar-nav">
-    <a href="#users-section" class="nav-link active" onclick="showSection('users-section')">👥 Users</a>
-    <a href="#password-section" class="nav-link" onclick="showSection('password-section')">🔐 Password History</a>
-    <a href="../index.php" style="margin-top: auto; background: #ef5350; text-align: center;">← Back to Dashboard</a>
+  <div class="brand">
+    <h1>BB</h1>
   </div>
+  <nav class="sidebar-nav">
+    <a href="../index.php">Dashboard</a>
+    <a href="../deposit.php">Deposit</a>
+    <a href="../returns.php">Returns</a>
+    <a href="../stock_log.php">Stock Log</a>
+    <?php if(isset($user) && ($user['role'] ?? '') === 'admin'): ?>
+      <a href="admin_panel.php#users-section">Users</a>
+    <?php endif; ?>
+    <a href="../logout.php" class="logout">Logout</a>
+  </nav>
 </div>
 
-<div class="main-content">
+<div class="app">
 <div class="container">
+  <!-- Topbar (shared with other pages) -->
+  <div class="topbar">
+    <div class="brand">
+      <button class="toggle-sidebar" onclick="toggleSidebar()">Menu</button>
+      <h1>Admin Panel</h1>
+    </div>
+    <div class="menu-wrap">
+      <span>Signed in as <strong><?= htmlspecialchars($user['username'] ?? 'Admin') ?></strong></span>
+    </div>
+  </div>
 
 <?php if(isset($msg)) echo "<div class='msg'>{$msg}</div>"; ?>
 
 <div id="users-section" class="section" style="display: block;">
   <h1>Registered Users</h1>
 
-<!-- Search Bar -->
-<div style="margin-bottom: 20px; display: flex; gap: 10px; align-items: center;">
-    <input 
-        type="text" 
-        id="userSearch" 
-        placeholder="🔍 Search by username, email, or ID..." 
-        style="flex: 1; padding: 10px; border: 2px solid #26a69a; border-radius: 6px; font-family: 'Poppins', sans-serif; font-size: 14px;">
-    <button onclick="resetSearch()" class="button secondary" style="white-space: nowrap;">Clear Search</button>
+<div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center;">
+  <button id="showAddUser" class="button" style="padding: 10px 16px;">+ Add User</button>
+  <button id="toggleSearch" class="button" style="padding: 10px 16px;">🔍 Search</button>
+</div>
+
+<div id="searchBox" style="display: none; margin-bottom: 20px; padding: 15px; background: #f9fafb; border-radius: 6px;">
+  <input 
+      type="text" 
+      id="userSearch" 
+      placeholder="Search by username, email, or ID..." 
+      style="padding: 10px; border: 2px solid #26a69a; border-radius: 6px; font-family: 'Poppins', sans-serif; font-size: 14px; width: 100%; max-width: 400px;">
+</div>
+
+<div id="addUserForm" style="display:none; margin-bottom:20px;">
+  <form method="post" style="max-width:400px;">
+    <h4>Add New User</h4>
+    <div class="form-row">
+      <div class="col">
+        <label for="add_username">Username</label>
+        <input id="add_username" type="text" name="username" required autocomplete="username">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="col">
+        <label for="add_email">Email</label>
+        <input id="add_email" type="email" name="email" required autocomplete="email">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="col">
+        <label for="add_password">Password</label>
+        <input id="add_password" type="password" name="password" required autocomplete="new-password">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="col">
+        <label for="add_confirm_password">Confirm Password</label>
+        <input id="add_confirm_password" type="password" name="confirm_password" required autocomplete="new-password">
+      </div>
+    </div>
+    <button type="submit" name="create_user" class="button" style="padding: 10px 16px;">Add</button>
+  </form>
 </div>
 
 <!-- Results counter -->
@@ -667,23 +597,23 @@ form button:hover {
 <input type="hidden" name="edit_user_id" value="<?= $row['user_id'] ?>">
 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
 <div>
-<label style="font-weight: 600; display: block; margin-bottom: 6px; color: #2d6a6a;">Username</label>
-<input type="text" name="username" value="<?= htmlspecialchars($row['username']) ?>" placeholder="Username" required>
+<label for="username_<?= $row['user_id'] ?>" style="font-weight: 600; display: block; margin-bottom: 6px; color: #2d6a6a;">Username</label>
+<input id="username_<?= $row['user_id'] ?>" type="text" name="username" value="<?= htmlspecialchars($row['username']) ?>" placeholder="Username" required autocomplete="username">
 </div>
 <div>
-<label style="font-weight: 600; display: block; margin-bottom: 6px; color: #2d6a6a;">Email</label>
-<input type="email" name="email" value="<?= htmlspecialchars($row['email']) ?>" placeholder="Email" required>
+<label for="email_<?= $row['user_id'] ?>" style="font-weight: 600; display: block; margin-bottom: 6px; color: #2d6a6a;">Email</label>
+<input id="email_<?= $row['user_id'] ?>" type="email" name="email" value="<?= htmlspecialchars($row['email']) ?>" placeholder="Email" required autocomplete="email">
 </div>
 <div>
-<label style="font-weight: 600; display: block; margin-bottom: 6px; color: #2d6a6a;">Role</label>
-<select name="role">
-    <option value="user" <?= $row['role'] === 'user' ? 'selected' : '' ?>>User</option>
-    <option value="admin" <?= $row['role'] === 'admin' ? 'selected' : '' ?>>Admin</option>
+<label for="role_<?= $row['user_id'] ?>" style="font-weight: 600; display: block; margin-bottom: 6px; color: #2d6a6a;">Role</label>
+<select id="role_<?= $row['user_id'] ?>" name="role">
+  <option value="user" <?= $row['role'] === 'user' ? 'selected' : '' ?>>User</option>
+  <option value="admin" <?= $row['role'] === 'admin' ? 'selected' : '' ?>>Admin</option>
 </select>
 </div>
 <div>
-<label style="font-weight: 600; display: block; margin-bottom: 6px; color: #2d6a6a;">New Password</label>
-<input type="password" name="password" placeholder="Leave blank to keep current password">
+<label for="password_<?= $row['user_id'] ?>" style="font-weight: 600; display: block; margin-bottom: 6px; color: #2d6a6a;">New Password</label>
+<input id="password_<?= $row['user_id'] ?>" type="password" name="password" placeholder="Leave blank to keep current password" autocomplete="new-password">
 </div>
 </div>
 <button type="submit" name="update_user">Update User</button>
@@ -730,10 +660,12 @@ $logs = $conn->query("SELECT * FROM stock_log WHERE user_id=$uid ORDER BY date_l
 <th>Log ID</th>
 <th>Action</th>
 <th>Customer</th>
+<th>Size</th>
 <th>Bottle Type</th>
 <th>Qty</th>
 <th>With Case</th>
 <th>Case Qty</th>
+<th>Details</th>
 <th>Amount</th>
 <th>Date</th>
 </tr>
@@ -742,10 +674,12 @@ $logs = $conn->query("SELECT * FROM stock_log WHERE user_id=$uid ORDER BY date_l
 <td><?= $l['log_id'] ?></td>
 <td><strong><?= htmlspecialchars($l['action_type']) ?></strong></td>
 <td><?= !empty($l['customer_name']) ? htmlspecialchars($l['customer_name']) : '<span style="color: #999;">N/A</span>' ?></td>
+<td><?= !empty($l['bottle_size']) ? htmlspecialchars($l['bottle_size']) : '<span style="color:#999;">N/A</span>' ?></td>
 <td><?= !empty($l['bottle_type']) ? htmlspecialchars($l['bottle_type']) : '<span style="color: #999;">N/A</span>' ?></td>
 <td><?= !empty($l['quantity']) && $l['quantity'] > 0 ? $l['quantity'] : '<span style="color: #999;">N/A</span>' ?></td>
 <td><?= isset($l['with_case']) && $l['with_case'] ? '<strong>Yes</strong>' : '<span style="color: #999;">No</span>' ?></td>
 <td><?= isset($l['case_quantity']) && $l['case_quantity'] > 0 ? $l['case_quantity'] : '<span style="color: #999;">0</span>' ?></td>
+<td><?= !empty($l['details']) ? htmlspecialchars($l['details']) : '<span style="color:#999;">N/A</span>' ?></td>
 <td><?= !empty($l['amount']) && $l['amount'] > 0 ? '₱' . number_format($l['amount'], 2) : '<span style="color: #999;">N/A</span>' ?></td>
 <td><?= date("M d, Y - h:i A", strtotime($l['date_logged'])) ?></td>
 </tr>
@@ -859,75 +793,127 @@ $logs = $conn->query("SELECT * FROM stock_log WHERE user_id=$uid ORDER BY date_l
 </div>
 
 <script>
+// Handle section switching
+function showSection(sectionId) {
+    document.querySelectorAll('.section').forEach(s => s.style.display = 'none');
+    const dest = document.getElementById(sectionId);
+    if (dest) dest.style.display = 'block';
+    window.history.replaceState({}, '', '#' + sectionId);
+    // highlight corresponding sidebar link (if any)
+    document.querySelectorAll('.sidebar-nav a').forEach(a => {
+        a.classList.toggle('active', a.getAttribute('href').includes(sectionId));
+    });
+}
+
+// Toggle search box visibility
+const toggleSearchBtn = document.getElementById('toggleSearch');
+const searchBox = document.getElementById('searchBox');
+if(toggleSearchBtn && searchBox) {
+    toggleSearchBtn.addEventListener('click', function(){
+        if(searchBox.style.display === 'none' || searchBox.style.display === '') {
+            searchBox.style.display = 'block';
+            toggleSearchBtn.textContent = '✕ Close Search';
+            document.getElementById('userSearch').focus();
+        } else {
+            searchBox.style.display = 'none';
+            toggleSearchBtn.textContent = '🔍 Search';
+            resetSearch();
+        }
+    });
+}
+
 // Real-time user search functionality
 const searchInput = document.getElementById('userSearch');
 const usersTable = document.getElementById('usersTable');
 const resultCounter = document.getElementById('resultCounter');
 const visibleCount = document.getElementById('visibleCount');
 
-searchInput.addEventListener('keyup', function() {
-    const searchTerm = this.value.toLowerCase().trim();
-    let visibleRows = 0;
-    let totalRows = 0;
+if(searchInput) {
+    searchInput.addEventListener('keyup', function() {
+        const searchTerm = this.value.toLowerCase().trim();
+        let visibleRows = 0;
+        let totalRows = 0;
 
-    // Get all user rows (every row with a user-data class)
-    const rows = usersTable.querySelectorAll('tr[data-user-id]');
-    
-    rows.forEach(row => {
-        totalRows++;
-        const userId = row.getAttribute('data-user-id');
-        const username = row.getAttribute('data-username').toLowerCase();
-        const email = row.getAttribute('data-email').toLowerCase();
+        const rows = usersTable.querySelectorAll('tr[data-user-id]');
         
-        // Match if search term is in username, email, or user ID
-        const matches = !searchTerm || 
-                       username.includes(searchTerm) || 
-                       email.includes(searchTerm) || 
-                       userId.includes(searchTerm);
-        
-        if (matches) {
-            row.style.display = '';
-            visibleRows++;
+        rows.forEach(row => {
+            totalRows++;
+            const userId = row.getAttribute('data-user-id');
+            const username = row.getAttribute('data-username').toLowerCase();
+            const email = row.getAttribute('data-email').toLowerCase();
             
-            // Also show the edit and history rows for visible users
-            const nextEdit = row.nextElementSibling;
-            const nextHistory = nextEdit ? nextEdit.nextElementSibling : null;
-            if (nextEdit) nextEdit.style.display = '';
-            if (nextHistory) nextHistory.style.display = '';
+            const matches = !searchTerm || 
+                           username.includes(searchTerm) || 
+                           email.includes(searchTerm) || 
+                           userId.includes(searchTerm);
+            
+            if (matches) {
+                row.style.display = '';
+                visibleRows++;
+                
+                const nextEdit = row.nextElementSibling;
+                const nextHistory = nextEdit ? nextEdit.nextElementSibling : null;
+                if (nextEdit) nextEdit.style.display = '';
+                if (nextHistory) nextHistory.style.display = '';
+            } else {
+                row.style.display = 'none';
+                
+                const nextEdit = row.nextElementSibling;
+                const nextHistory = nextEdit ? nextEdit.nextElementSibling : null;
+                if (nextEdit) nextEdit.style.display = 'none';
+                if (nextHistory) nextHistory.style.display = 'none';
+            }
+        });
+
+        visibleCount.textContent = visibleRows;
+        
+        if (searchTerm && visibleRows === 0) {
+            resultCounter.innerHTML = `<span style="color: #e74c3c;">No users found matching "<strong>${searchTerm}</strong>"</span>`;
+        } else if (visibleRows > 0) {
+            resultCounter.textContent = `Showing ${visibleRows} user(s)`;
         } else {
-            row.style.display = 'none';
-            
-            // Also hide the edit and history rows
-            const nextEdit = row.nextElementSibling;
-            const nextHistory = nextEdit ? nextEdit.nextElementSibling : null;
-            if (nextEdit) nextEdit.style.display = 'none';
-            if (nextHistory) nextHistory.style.display = 'none';
+            resultCounter.textContent = `Showing all users`;
         }
     });
+}
 
-    // Update counter
-    visibleCount.textContent = visibleRows;
-    
-    // Show message if no results
-    if (searchTerm && visibleRows === 0) {
-        resultCounter.innerHTML = `<span style="color: #e74c3c;">No users found matching "<strong>${searchTerm}</strong>"</span>`;
-    } else if (visibleRows > 0) {
-        resultCounter.textContent = `Showing ${visibleRows} user(s)`;
-    } else {
-        resultCounter.textContent = `Showing all users`;
-    }
-});
+// toggle add user form
+const showAddBtn = document.getElementById('showAddUser');
+const addFormDiv = document.getElementById('addUserForm');
+if(showAddBtn && addFormDiv) {
+    showAddBtn.addEventListener('click', function(){
+        if(addFormDiv.style.display === 'none' || addFormDiv.style.display === '') {
+            addFormDiv.style.display = 'block';
+            showAddBtn.textContent = '- Hide Form';
+        } else {
+            addFormDiv.style.display = 'none';
+            showAddBtn.textContent = '+ Add User';
+        }
+    });
+}
 
 // Reset search function
 function resetSearch() {
-    searchInput.value = '';
-    searchInput.dispatchEvent(new Event('keyup'));
-    searchInput.focus();
+    if(searchInput) {
+        searchInput.value = '';
+        searchInput.dispatchEvent(new Event('keyup'));
+    }
 }
 
-// Auto-focus search input when page loads
+// Handle hash navigation for sections
 window.addEventListener('load', function() {
-    searchInput.focus();
+    const hash = window.location.hash.substring(1);
+    if(hash === 'password-section' || hash === 'users-section') {
+        showSection(hash);
+    }
+});
+
+// Listen for hash changes
+window.addEventListener('hashchange', function() {
+    const hash = window.location.hash.substring(1);
+    if(hash === 'password-section' || hash === 'users-section') {
+        showSection(hash);
+    }
 });
 </script>
 
@@ -1042,22 +1028,14 @@ window.addEventListener('load', function() {
 </style>
 
 <script>
-function showSection(sectionId) {
-  // Hide all sections
-  const sections = document.querySelectorAll('.section');
-  sections.forEach(section => section.style.display = 'none');
-  
-  // Show selected section
-  const selected = document.getElementById(sectionId);
-  if (selected) {
-    selected.style.display = 'block';
-  }
-  
-  // Update active nav link
-  const navLinks = document.querySelectorAll('.nav-link');
-  navLinks.forEach(link => link.classList.remove('active'));
-  event.target.classList.add('active');
+// control menu button visibility (extra safety on top of CSS rules)
+function refreshToggle() {
+    const toggles = document.querySelectorAll('.toggle-sidebar');
+    const show = window.innerWidth <= 768;
+    toggles.forEach(b => b.style.display = show ? 'block' : 'none');
 }
+window.addEventListener('DOMContentLoaded', refreshToggle);
+window.addEventListener('resize', refreshToggle);
 </script>
 
 </body>

@@ -1,11 +1,57 @@
 <?php
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: POST');
+header('Access-Control-Allow-Methods: POST, GET');
 header('Access-Control-Allow-Headers: Content-Type');
 
 require_once '../includes/db_connect.php';
 
+// GET: fetch deposits and returns by customer name (recent entries)
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['customer'])) {
+    $cust = trim($_GET['customer']);
+    $deposits = [];
+    $returns = [];
+    
+    // Fetch latest deposit entry from stock_log for this customer
+    $s1 = $conn->prepare("SELECT bottle_type, quantity, amount, with_case, case_quantity, details, date_logged as date FROM stock_log WHERE action_type='Deposit' AND customer_name = ? ORDER BY date_logged DESC LIMIT 5");
+    $s1->bind_param('s', $cust);
+    $s1->execute();
+    $r1 = $s1->get_result();
+    while ($row = $r1->fetch_assoc()) {
+        $deposits[] = $row;
+    }
+    $s1->close();
+
+    // Fetch returns and refunds from stock_log
+    // return entries may include refunds which record an amount instead of bottle info
+    $s2 = $conn->prepare("SELECT bottle_type, quantity, with_case, case_quantity, amount, date_logged as date FROM stock_log WHERE action_type IN ('Return','Refund') AND customer_name = ? ORDER BY date_logged DESC LIMIT 5");
+    $s2->bind_param('s', $cust);
+    $s2->execute();
+    $r2 = $s2->get_result();
+    while ($row = $r2->fetch_assoc()) {
+        $returns[] = $row;
+    }
+    $s2->close();
+
+    // also fetch canonical customer info if available
+    $customerInfo = null;
+    $cstmt = $conn->prepare("SELECT bottle_type, quantity, amount, with_case, case_quantity, bottle_size, last_deposit FROM customers WHERE customer_name = ? LIMIT 1");
+    if ($cstmt) {
+        $cstmt->bind_param('s', $cust);
+        $cstmt->execute();
+        $cres = $cstmt->get_result();
+        if ($cres && $cres->num_rows) {
+            $customerInfo = $cres->fetch_assoc();
+        }
+        $cstmt->close();
+    }
+
+    echo json_encode(['deposits' => $deposits, 'returns' => $returns, 'customer' => $customerInfo]);
+    $conn->close();
+    exit;
+}
+
+// POST: legacy create deposit for API
 $data = json_decode(file_get_contents('php://input'), true);
 
 if (!$data || !isset($data['user_id']) || !isset($data['amount'])) {

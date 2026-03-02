@@ -6,14 +6,50 @@ date_default_timezone_set('Asia/Manila');
 
 $error = "";
 $success = "";
+// determine if an admin account already exists
+$adminExists = false;
+$adminCheck = $conn->query("SELECT COUNT(*) as cnt FROM user WHERE role='admin'");
+if ($adminCheck) {
+    $row = $adminCheck->fetch_assoc();
+    if ($row && $row['cnt'] > 0) {
+        $adminExists = true;
+    }
+}
+
 if (isset($_GET['registered'])) {
     $success = "Account created successfully. Please login.";
 }
 
-if ($_SERVER["REQUEST_METHOD"] === "POST") {
+// if there is no admin yet, treat POST as registration
+if (!$adminExists && $_SERVER["REQUEST_METHOD"] === "POST") {
+    // registration for first admin
+    $username = trim($_POST['username']);
+    $email = trim($_POST['email'] ?? '');
+    $password = $_POST['password'] ?? '';
+    $confirm  = $_POST['confirm_password'] ?? '';
+
+    if (!$username || !$email || !$password) {
+        $error = 'All fields are required.';
+    } elseif ($password !== $confirm) {
+        $error = 'Passwords do not match.';
+    } else {
+        $hash = password_hash($password, PASSWORD_DEFAULT);
+        $stmt = $conn->prepare("INSERT INTO user (username, email, password, role) VALUES (?, ?, ?, 'admin')");
+        $stmt->bind_param("sss", $username, $email, $hash);
+        if ($stmt->execute()) {
+            $success = 'Administrator account created. Please login below.';
+            $adminExists = true;
+            header("Location: login.php?registered=1");
+            exit();
+        } else {
+            $error = 'Registration failed: ' . $stmt->error;
+        }
+        $stmt->close();
+    }
+} elseif ($adminExists && $_SERVER["REQUEST_METHOD"] === "POST") {
+    // existing login flow
     $username = trim($_POST['username']);
     $password = $_POST['password'];
-
 
     $hasForce = false;
     $col = $conn->query("SHOW COLUMNS FROM user LIKE 'force_change'");
@@ -292,26 +328,48 @@ button:active {
 <body>
 <div class="container">
   <div class="box">
-    <h2>BottleBank Login</h2>
-
-    <?php if($error): ?><div class="error"><?= htmlspecialchars($error) ?></div><?php endif; ?>
-    <?php if($success): ?><div class="success"><?= htmlspecialchars($success) ?></div><?php endif; ?>
-
-    <form method="post">
-      <div class="form-group">
-        <label for="username">Username</label>
-        <input type="text" id="username" name="username" placeholder="Enter your username" required>
+    <?php if(!$adminExists): ?>
+      <h2>Register Admin</h2>
+      <?php if($error): ?><div class="error"><?= htmlspecialchars($error) ?></div><?php endif; ?>
+      <?php if($success): ?><div class="success"><?= htmlspecialchars($success) ?></div><?php endif; ?>
+      <form method="post">
+        <div class="form-group">
+          <label for="username">Username</label>
+          <input type="text" id="username" name="username" placeholder="Choose a username" required>
+        </div>
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" placeholder="Enter your email" required>
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" placeholder="Enter a password" required>
+        </div>
+        <div class="form-group">
+          <label for="confirm_password">Confirm Password</label>
+          <input type="password" id="confirm_password" name="confirm_password" placeholder="Re-type password" required>
+        </div>
+        <button type="submit">Create Admin</button>
+      </form>
+    <?php else: ?>
+      <h2>BottleBank Login</h2>
+      <?php if($error): ?><div class="error"><?= htmlspecialchars($error) ?></div><?php endif; ?>
+      <?php if($success): ?><div class="success"><?= htmlspecialchars($success) ?></div><?php endif; ?>
+      <form method="post">
+        <div class="form-group">
+          <label for="username">Username</label>
+          <input type="text" id="username" name="username" placeholder="Enter your username" required>
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" placeholder="Enter your password" required>
+        </div>
+        <button type="submit">Login</button>
+      </form>
+      <div class="link">
+        Don't have an account? <a href="register.php">Sign up here</a>
       </div>
-      <div class="form-group">
-        <label for="password">Password</label>
-        <input type="password" id="password" name="password" placeholder="Enter your password" required>
-      </div>
-      <button type="submit">Login</button>
-    </form>
-
-    <div class="link">
-      Don't have an account? <a href="register.php">Sign up here</a>
-    </div>
+    <?php endif; ?>
   </div>
 </div>
 </body>

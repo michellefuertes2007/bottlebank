@@ -1,5 +1,16 @@
 <?php
 include 'includes/db_connect.php';
+
+// helper to create a column when missing (mirrors other pages)
+function ensureColumn($conn, $table, $column, $definition) {
+    $res = $conn->query("SHOW COLUMNS FROM `$table` LIKE '$column'");
+    if(!$res || $res->num_rows === 0) {
+        $conn->query("ALTER TABLE `$table` ADD COLUMN $definition");
+    }
+}
+// stock_log has started including bottle_size on recent inserts
+ensureColumn($conn, 'stock_log', 'bottle_size', "bottle_size VARCHAR(10) DEFAULT 'small'");
+
 session_start();
 if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit(); }
 
@@ -25,9 +36,10 @@ if (!$is_admin) {
   $params[] = $user_id;
 } elseif ($search_query) {
   // Search across multiple columns: customer name, bottle type, action type, and numeric fields
-  $where_sql .= " AND (customer_name LIKE ? OR bottle_type LIKE ? OR action_type LIKE ? OR CAST(quantity AS CHAR) LIKE ? OR CAST(amount AS CHAR) LIKE ?)";
-  $types .= 'sssss';
+  $where_sql .= " AND (customer_name LIKE ? OR bottle_type LIKE ? OR action_type LIKE ? OR CAST(quantity AS CHAR) LIKE ? OR CAST(amount AS CHAR) LIKE ? OR details LIKE ? )";
+  $types .= 'ssssss';
   $search_param = '%' . $search_query . '%';
+  $params[] = $search_param;
   $params[] = $search_param;
   $params[] = $search_param;
   $params[] = $search_param;
@@ -71,7 +83,7 @@ if ($page > $total_pages) $page = $total_pages;
 
 // Get records with pagination
 $offset = ($page - 1) * $per_page;
-$data_sql = "SELECT log_id, action_type, customer_name, bottle_type, quantity, amount, with_case, case_quantity, date_logged FROM stock_log " . $where_sql . " ORDER BY date_logged DESC LIMIT ?, ?";
+$data_sql = "SELECT log_id, action_type, customer_name, bottle_type, bottle_size, quantity, with_case, case_quantity, amount, details, date_logged FROM stock_log " . $where_sql . " ORDER BY date_logged DESC LIMIT ?, ?";
 $stmt = $conn->prepare($data_sql);
 
 // Bind with offset and limit
@@ -111,6 +123,16 @@ $stmt->close();
 </head>
 <body>
 
+<script>
+// early sidebar toggle function
+function toggleSidebar(){
+  const sidebar = document.querySelector('.sidebar');
+  const overlay = document.querySelector('.sidebar-overlay');
+  if(sidebar) sidebar.classList.toggle('active');
+  if(overlay) overlay.classList.toggle('active');
+}
+</script>
+
 <div class="sidebar-overlay" onclick="toggleSidebar()"></div>
 
 <div class="sidebar">
@@ -121,10 +143,9 @@ $stmt->close();
         <a href="index.php">Dashboard</a>
         <a href="deposit.php">Deposit</a>
         <a href="returns.php">Returns</a>
-        <a href="refund.php">Refund</a>
         <a href="stock_log.php" class="active">Stock Log</a>
         <?php if($is_admin): ?>
-        <a href="admin/admin_panel.php">Admin Panel</a>
+          <a href="/admin/admin_panel.php#users-section" > Users</a>
         <?php endif; ?>
         <a href="logout.php" class="logout">Logout</a>
     </nav>
@@ -132,14 +153,14 @@ $stmt->close();
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><button class="toggle-sidebar" onclick="toggleSidebar()">Menu</button><div class="logo">BB</div><div><h1>Stock Log</h1><p class="kv">View all transaction logs</p></div></div>
+    <div class="brand"><button class="toggle-sidebar" onclick="toggleSidebar()">Menu</button><div><h1>Stock Log</h1><p class="kv">View all transaction logs</p></div></div>
     <div class="menu-wrap"><a href="index.php" class="kv">← Back to Dashboard</a></div>
   </div>
 
   <div class="controls">
     <form method="get" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <?php if($is_admin): ?>
-      <input type="text" name="search" placeholder="Search by Customer, Action, Bottle, Quantity, or Amount..." value="<?= htmlspecialchars($search_query) ?>" style="flex:1;min-width:250px;">
+      <input type="text" name="search" placeholder="Search by Customer, Action, Bottle, Size, Quantity, Amount, or Details..." value="<?= htmlspecialchars($search_query) ?>" style="flex:1;min-width:250px;">
       <?php endif; ?>
 
       <label>Period:</label>
@@ -200,7 +221,7 @@ $stmt->close();
 
     <table>
         <thead>
-            <tr><th>ID</th><th>Action</th><th>Customer</th><th>Bottle</th><th>Qty</th><th>With Case</th><th>Cases</th><th>Amount</th><th>Date</th></tr>
+            <tr><th>ID</th><th>Action</th><th>Customer</th><th>Size</th><th>Bottle</th><th>Qty</th><th>With Case</th><th>Cases</th><th>Details</th><th>Amount</th><th>Date</th></tr>
         </thead>
         <tbody>
         <?php if($result && $result->num_rows): while($row = $result->fetch_assoc()): ?>
@@ -208,10 +229,12 @@ $stmt->close();
                 <td><?= htmlspecialchars($row['log_id']) ?></td>
                 <td><?= htmlspecialchars($row['action_type']) ?></td>
                 <td><?= htmlspecialchars(!empty($row['customer_name']) ? $row['customer_name'] : 'N/A') ?></td>
+                <td><?= htmlspecialchars(!empty($row['bottle_size']) ? $row['bottle_size'] : 'N/A') ?></td>
                 <td><?= htmlspecialchars(!empty($row['bottle_type']) ? $row['bottle_type'] : 'N/A') ?></td>
                 <td><?= htmlspecialchars(!empty($row['quantity']) ? $row['quantity'] : 'N/A') ?></td>
                 <td><?= ($row['with_case'] ? '✓ Yes' : '✗ No') ?></td>
                 <td><?= htmlspecialchars(!empty($row['case_quantity']) ? $row['case_quantity'] : '0') ?></td>
+                <td><?= htmlspecialchars(!empty($row['details']) ? $row['details'] : 'N/A') ?></td>
                 <td><?= htmlspecialchars(!empty($row['amount']) ? '₱' . $row['amount'] : 'N/A') ?></td>
                 <td><?= htmlspecialchars($row['date_logged']) ?></td>
             </tr>

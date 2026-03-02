@@ -7,6 +7,32 @@ $is_admin = (isset($_SESSION['role']) && $_SESSION['role'] === 'admin');
 $msg = '';
 $error = '';
 
+// helper to determine if a table exists in the current database
+function tableExists($conn, $table) {
+    $res = $conn->query("SHOW TABLES LIKE '$table'");
+    return ($res && $res->num_rows > 0);
+}
+
+// helper to add column if missing (avoids syntax issues on older MySQL)
+// now also skips if table itself doesn't exist
+function ensureColumn($conn, $table, $column, $definition) {
+    if (!tableExists($conn, $table)) {
+        // table not present yet, nothing to do
+        return;
+    }
+    $res = $conn->query("SHOW COLUMNS FROM `$table` LIKE '$column'");
+    if(!$res || $res->num_rows === 0) {
+        $conn->query("ALTER TABLE `$table` ADD COLUMN $definition");
+    }
+}
+
+// guarantee the size field exists in related tables
+ensureColumn($conn, 'deposit', 'bottle_size', "bottle_size VARCHAR(10) DEFAULT 'small'");
+ensureColumn($conn, 'customers', 'bottle_size', "bottle_size VARCHAR(10) DEFAULT 'small'");
+ensureColumn($conn, 'returns', 'bottle_size', "bottle_size VARCHAR(10) DEFAULT 'small'");
+// stock_log also started recording size; add column if missing
+ensureColumn($conn, 'stock_log', 'bottle_size', "bottle_size VARCHAR(10) DEFAULT 'small'");
+
 // Get all bottle types from database
 $bottle_types_list = [];
 $btResult = $conn->query("SELECT type_id, type_name FROM bottle_types ORDER BY type_name ASC");
@@ -15,6 +41,11 @@ if ($btResult) {
     $bottle_types_list[] = $row;
   }
 }
+
+// prepare distinct customer list from deposits for datalist/autofill
+$deposit_customers = [];
+$cR = $conn->query("SELECT DISTINCT customer_name FROM deposit WHERE customer_name IS NOT NULL AND customer_name != '' ORDER BY customer_name ASC");
+if ($cR) { while ($r = $cR->fetch_assoc()) $deposit_customers[] = $r['customer_name']; }
 
 // Handle editing bottle type
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_bottle_type'])) {
@@ -137,6 +168,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['edit_id']) && !isset
   $bottle_type = trim($_POST['bottle_type'] ?? '');
   $quantity = intval($_POST['quantity'] ?? 0);
   $amount = floatval($_POST['amount'] ?? 0);
+  $bottle_size = trim($_POST['bottle_size'] ?? 'small'); // small or 1l
   
   // Validate single bottle entry
   if ($quantity <= 0) {
@@ -155,18 +187,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['edit_id']) && !isset
     }
     
     // insert single deposit
-    $ins = $conn->prepare("INSERT INTO deposit (user_id, customer_name, bottle_type, quantity, with_case, case_quantity, deposit_date) VALUES (?, ?, ?, ?, ?, ?, NOW())");
-    $ins->bind_param("issiii", $user_id, $customer_name, $bottle_type, $quantity, $with_case, $case_quantity);
+    $ins = $conn->prepare("INSERT INTO deposit (user_id, customer_name, bottle_type, quantity, with_case, case_quantity, bottle_size, deposit_date) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())");
+    $ins->bind_param("issiiis", $user_id, $customer_name, $bottle_type, $quantity, $with_case, $case_quantity, $bottle_size);
     if ($ins->execute()) {
       // insert stock_log with formatted details including case info
       $details = "Deposit — " . $quantity . " bottles (" . $bottle_type . ")";
       if ($with_case && $case_quantity > 0) {
         $details .= " with " . $case_quantity . " case" . ($case_quantity > 1 ? "s" : "");
       }
-      $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, amount, details, with_case, case_quantity) VALUES (?, 'Deposit', ?, ?, ?, ?, ?, ?, ?)");
-      $log->bind_param("issidsii", $user_id, $customer_name, $bottle_type, $quantity, $amount, $details, $with_case, $case_quantity);
+      $sizeLabel = $bottle_size === '1l' ? '1L' : '8/12oz';
+      // prepare full details including size for log
+      $fullDetails = $details . ' (' . $sizeLabel . ')';
+      $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, amount, details, with_case, case_quantity, bottle_size) VALUES (?, 'Deposit', ?, ?, ?, ?, ?, ?, ?, ?)");
+      // types: i user_id, s customer_name, s bottle_type, i quantity, d amount,
+      // s details, i with_case, i case_quantity, s bottle_size
+      $log->bind_param('issidsiis', $user_id, $customer_name, $bottle_type, $quantity, $amount, $fullDetails, $with_case, $case_quantity, $bottle_size);
       $log->execute(); 
       $log->close();
+
+      // Upsert a per-customer latest info record so future autofill can use it
+      // Ensure customers table exists (now tracks bottle_size)
+      $createCustomers = "CREATE TABLE IF NOT EXISTS customers (
+        customer_name VARCHAR(255) PRIMARY KEY,
+        bottle_type VARCHAR(255),
+        quantity INT,
+        amount DECIMAL(10,2),
+        with_case TINYINT(1),
+        case_quantity INT,
+        bottle_size VARCHAR(10) DEFAULT 'small',
+        last_deposit DATETIME
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+      $conn->query($createCustomers);
+
+      $up = $conn->prepare("INSERT INTO customers (customer_name, bottle_type, quantity, amount, with_case, case_quantity, bottle_size, last_deposit) VALUES (?, ?, ?, ?, ?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE bottle_type=VALUES(bottle_type), quantity=VALUES(quantity), amount=VALUES(amount), with_case=VALUES(with_case), case_quantity=VALUES(case_quantity), bottle_size=VALUES(bottle_size), last_deposit=NOW()");
+      $up->bind_param('ssidiss', $customer_name, $bottle_type, $quantity, $amount, $with_case, $case_quantity, $bottle_size);
+      $up->execute();
+      if ($up) $up->close();
+
       $msg = 'Deposit recorded successfully!';
       header("refresh:1;url=index.php");
     } else {
@@ -179,7 +236,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['edit_id']) && !isset
 // Admin edit handling
 if ($is_admin && isset($_GET['edit_id'])) {
   $edit_id = intval($_GET['edit_id']);
-  $eSt = $conn->prepare("SELECT deposit_id, customer_name, bottle_type, quantity, deposit_date FROM deposit WHERE deposit_id = ?");
+  $eSt = $conn->prepare("SELECT deposit_id, customer_name, bottle_type, quantity, bottle_size, deposit_date FROM deposit WHERE deposit_id = ?");
   $eSt->bind_param('i', $edit_id);
   $eSt->execute();
   $editRow = $eSt->get_result()->fetch_assoc();
@@ -233,6 +290,13 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
     .form-row .col label { display:block; font-weight:600; margin-bottom:5px; color:#333; }
     .form-row .col input, .form-row .col select { width:100%; padding:10px; border:1px solid #ddd; border-radius:6px; font-size:14px; }
     .form-row .col input:focus, .form-row .col select:focus { outline:none; border-color:#26a69a; box-shadow:0 0 4px rgba(38,166,154,0.2); }
+    /* bottle size toggle buttons */
+    .size-toggle { display:flex; gap:8px; }
+    .size-option { cursor:pointer; user-select:none; padding:8px 16px; border:2px solid #26a69a; border-radius:6px; color:#26a69a; transition:all .2s; font-weight:600; }
+    .size-option input { display:none; }
+    /* checked state: background and white text */
+    .size-option input:checked + span { background:#26a69a; color:white; }
+    .size-option:hover { background:rgba(38,166,154,.15); }
     button { padding:10px 15px; border:none; border-radius:6px; cursor:pointer; font-weight:600; transition:0.3s; }
     button.primary { background:#26a69a; color:white; }
     button.primary:hover { background:#2e7d7d; }
@@ -247,6 +311,16 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
 </head>
 <body>
 
+<script>
+// define toggleSidebar early so Menu buttons don't break
+function toggleSidebar(){
+  const sidebar = document.querySelector('.sidebar');
+  const overlay = document.querySelector('.sidebar-overlay');
+  if(sidebar) sidebar.classList.toggle('active');
+  if(overlay) overlay.classList.toggle('active');
+}
+</script>
+
 <!-- Sidebar Overlay -->
 <div class="sidebar-overlay" onclick="toggleSidebar()"></div>
 
@@ -257,12 +331,11 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
     </div>
     <nav class="sidebar-nav">
         <a href="index.php">Dashboard</a>
-        <a href="deposit.php" class="active">Deposit</a>
+        <a href="deposit.php">Deposit</a>
         <a href="returns.php">Returns</a>
-        <a href="refund.php">Refund</a>
         <a href="stock_log.php">Stock Log</a>
         <?php if($is_admin): ?>
-        <a href="admin/admin_panel.php">Admin Panel</a>
+          <a href="/admin/admin_panel.php#users-section" > Users</a>
         <?php endif; ?>
         <a href="logout.php" class="logout">Logout</a>
     </nav>
@@ -270,7 +343,7 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
   <div class="app">
   <div class="topbar">
     <div class="brand">
-        <button class="toggle-sidebar" onclick="toggleSidebar()">Menu</button><div class="logo">BB</div><div><h1>Deposit</h1><p class="kv">Record and manage bottle deposits</p></div></div>
+        <button class="toggle-sidebar" onclick="toggleSidebar()">Menu</button><div><h1>Deposit</h1><p class="kv">Record and manage bottle deposits</p></div></div>
     <div class="menu-wrap"><a href="index.php" class="kv">← Back to Dashboard</a></div>
   </div>
 
@@ -296,6 +369,16 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
               <input type="text" name="bottle_type" value="<?=htmlspecialchars($editRow['bottle_type'])?>" required>
             </div>
           </div>
+          <?php $selectedSize = $editRow['bottle_size'] ?? 'small'; ?>
+          <div class="form-row">
+            <div class="col">
+              <label>Bottle Size</label>
+              <div class="size-toggle">
+                <label class="size-option"><input type="radio" name="bottle_size" value="small" <?= $selectedSize !== '1l' ? 'checked' : '' ?>><span>8oz/12oz</span></label>
+                <label class="size-option"><input type="radio" name="bottle_size" value="1l" <?= $selectedSize === '1l' ? 'checked' : '' ?>><span>1L</span></label>
+              </div>
+            </div>
+          </div>
           <div class="form-row">
             <div class="col">
               <label>Quantity</label>
@@ -317,7 +400,12 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
           <div class="form-row">
             <div class="col">
               <label>Customer Name</label>
-              <input type="text" name="customer_name" required>
+              <input type="text" name="customer_name" id="customer_name" list="customer_list" required>
+              <datalist id="customer_list">
+                <?php foreach($deposit_customers as $c): ?>
+                  <option value="<?= htmlspecialchars($c) ?>">
+                <?php endforeach; ?>
+              </datalist>
             </div>
           </div>
           
@@ -330,6 +418,13 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
                   <option value="<?= htmlspecialchars($type['type_name']) ?>"><?= htmlspecialchars($type['type_name']) ?></option>
                 <?php endforeach; ?>
               </select>
+            </div>
+            <div class="col">
+              <label>Bottle Size</label>
+              <div class="size-toggle">
+                <label class="size-option"><input type="radio" name="bottle_size" value="small" checked><span>8oz/12oz</span></label>
+                <label class="size-option"><input type="radio" name="bottle_size" value="1l"><span>1L</span></label>
+              </div>
             </div>
             <div class="col">
               <label>Quantity</label>
@@ -410,6 +505,67 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
       const withCaseCheckbox = document.getElementById('with_case');
       const caseQuantityRow = document.getElementById('caseQuantityRow');
       const caseQuantityInput = document.getElementById('case_quantity');
+      const sizeRadiosDep = document.querySelectorAll('input[name="bottle_size"]');
+      const qtyInputDep = document.querySelector('input[name="quantity"]');
+
+      // when customer name selected, fetch latest deposit info via AJAX
+      const custInput = document.getElementById('customer_name');
+      function fetchCustomerData(name) {
+        name = name.trim();
+        console.log('Deposit: fetchCustomerData called for', name);
+        if(name){
+          const url = 'api/deposit.php?customer=' + encodeURIComponent(name);
+          console.log('Fetching:', url);
+          fetch(url)
+            .then(r => { console.log('Status', r.status); return r.json(); })
+            .then(resp => {
+              console.log('Deposit API response', resp);
+              const src = (resp.deposits && resp.deposits.length) ? resp.deposits[0] : resp.customer;
+              console.log('Using source for autofill', src);
+              if(src){
+                const bt = src.bottle_type || '';
+                const qty = src.quantity || '';
+                const amt = (typeof src.amount !== 'undefined') ? src.amount : '';
+                const withCaseVal = src.with_case;
+                const caseQtyVal = src.case_quantity;
+                const sizeVal = src.bottle_size || '';
+                const select = document.querySelector('select[name="bottle_type"]');
+                if(select){
+                  for(const opt of select.options){
+                    if(opt.value === bt){ opt.selected = true; break; }
+                  }
+                }
+                const qtyInput = document.querySelector('input[name="quantity"]');
+                if(qtyInput) qtyInput.value = qty;
+                const amtInput = document.querySelector('input[name="amount"]');
+                if(amtInput) amtInput.value = amt;
+                if(withCaseVal){
+                  if(withCaseCheckbox){ withCaseCheckbox.checked = true; withCaseCheckbox.dispatchEvent(new Event('change')); }
+                  if(caseQuantityInput) caseQuantityInput.value = caseQtyVal;
+                } else {
+                  if(withCaseCheckbox){ withCaseCheckbox.checked = false; withCaseCheckbox.dispatchEvent(new Event('change')); }
+                }
+                // set size radio if we know it
+                if(sizeVal){
+                  const r = document.querySelector(`input[name="bottle_size"][value="${sizeVal}"]`);
+                  if(r) r.checked = true;
+                } else if(resp.deposits && resp.deposits.length && resp.deposits[0].details){
+                  const m = resp.deposits[0].details.match(/\((1L|8\/12oz)\)$/);
+                  if(m){
+                    const parsed = m[1] === '1L' ? '1l' : 'small';
+                    const r2 = document.querySelector(`input[name="bottle_size"][value="${parsed}"]`);
+                    if(r2) r2.checked = true;
+                  }
+                }
+              }
+            }).catch(err => console.error('Fetch error', err));
+        }
+      }
+      if(custInput){
+        custInput.addEventListener('input', function(){ fetchCustomerData(this.value); });
+        custInput.addEventListener('change', function(){ fetchCustomerData(this.value); });
+        custInput.addEventListener('blur', function(){ fetchCustomerData(this.value); });
+      }
 
       if (withCaseCheckbox) {
         // Show/hide case quantity input based on checkbox and set sensible defaults
@@ -424,8 +580,23 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
             caseQuantityInput.value = '0';
             caseQuantityInput.required = false;
           }
+          computeCasesDep();
         });
       }
+
+      function computeCasesDep(){
+        if(withCaseCheckbox && withCaseCheckbox.checked && qtyInputDep){
+          const qty = parseInt(qtyInputDep.value) || 0;
+          let size = 'small';
+          const sel = document.querySelector('input[name="bottle_size"]:checked');
+          if(sel) size = sel.value;
+          const factor = size === '1l' ? 12 : 24;
+          caseQuantityInput.value = Math.floor(qty / factor);
+        }
+      }
+
+      if(qtyInputDep) qtyInputDep.addEventListener('input', computeCasesDep);
+      sizeRadiosDep.forEach(r=>r.addEventListener('change', computeCasesDep));
 
       // Existing bottle types from PHP
       const existingTypes = [

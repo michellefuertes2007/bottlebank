@@ -11,6 +11,11 @@ $is_admin = (isset($_SESSION['role']) && $_SESSION['role'] === 'admin');
 $msg = '';
 $error = '';
 
+// prepare distinct customer list from deposits for datalist/autofill
+$deposit_customers = [];
+$cR = $conn->query("SELECT DISTINCT customer_name FROM deposit WHERE customer_name IS NOT NULL AND customer_name != '' ORDER BY customer_name ASC");
+if ($cR) { while ($r = $cR->fetch_assoc()) $deposit_customers[] = $r['customer_name']; }
+
 // Handle create refund
 if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
     $amount = floatval($_POST['amount'] ?? 0);
@@ -187,10 +192,20 @@ $refund_stmt->close();
 </head>
 <body>
 
+<script>
+// early toggleSidebar definition for compatibility with onclick attributes
+function toggleSidebar(){
+  const sidebar = document.querySelector('.sidebar');
+  const overlay = document.querySelector('.sidebar-overlay');
+  if(sidebar) sidebar.classList.toggle('active');
+  if(overlay) overlay.classList.toggle('active');
+}
+</script>
+
 <div class="sidebar-overlay" onclick="toggleSidebar()"></div>
 
 <div class="sidebar">
-    <div class="brand">
+    <div class="brand"> 
         <h1>BB</h1>
     </div>
     <nav class="sidebar-nav">
@@ -200,7 +215,7 @@ $refund_stmt->close();
         <a href="refund.php" class="active">Refund</a>
         <a href="stock_log.php">Stock Log</a>
         <?php if($is_admin): ?>
-        <a href="admin/admin_panel.php">Admin Panel</a>
+          <a href="/admin/admin_panel.php#users-section" style="font-size:13px;color:rgba(255,255,255,0.9);text-decoration:none;padding:6px 8px;border-radius:6px;"> Users</a>
         <?php endif; ?>
         <a href="logout.php" class="logout">Logout</a>
     </nav>
@@ -248,13 +263,28 @@ $refund_stmt->close();
           <div class="form-row">
             <div class="col">
               <label>Customer Name</label>
-              <input type="text" name="customer_name" placeholder="Name of customer" required>
+              <input type="text" name="customer_name" id="customer_name" list="customer_list" placeholder="Name of customer" required>
+              <datalist id="customer_list">
+                <?php foreach($deposit_customers as $c): ?>
+                  <option value="<?= htmlspecialchars($c) ?>">
+                <?php endforeach; ?>
+              </datalist>
             </div>
           </div>
           <div class="form-row">
             <div class="col">
               <label>Amount (₱)</label>
-              <input type="number" step="0.01" min="0.01" name="amount" placeholder="₱ 0.00" required>
+              <input type="number" step="0.01" min="0.01" name="amount" id="amount" placeholder="₱ 0.00" required>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="col">
+              <label>Last Bottle Type</label>
+              <input type="text" id="auto_bottle" readonly placeholder="(from history)">
+            </div>
+            <div class="col">
+              <label>Last Quantity</label>
+              <input type="number" id="auto_qty" readonly placeholder="(from history)">
             </div>
           </div>
           <div style="display:flex;gap:12px;margin-top:20px">
@@ -262,6 +292,7 @@ $refund_stmt->close();
             <a href="index.php"><button type="button" class="ghost">Cancel</button></a>
           </div>
         </form>
+        <div id="customerHistory"></div>
       <?php endif; ?>
     </div>
   </div>
@@ -282,6 +313,73 @@ document.querySelectorAll('.sidebar-nav a').forEach(link => {
     }
   });
 });
+
+// customer history ajax (same as returns page)
+const custInput = document.getElementById('customer_name');
+const historyDiv = document.getElementById('customerHistory');
+
+function fetchCustomerData(name) {
+  name = name.trim();
+  console.log('Fetching data for customer:', name);
+  if(name){
+    const url = 'api/deposit.php?customer=' + encodeURIComponent(name);
+    console.log('Fetching from:', url);
+    fetch(url)
+      .then(r => {
+        console.log('Response status:', r.status);
+        return r.json();
+      })
+      .then(resp => {
+        console.log('API Response:', resp);
+        let html='';
+        if(resp.deposits && resp.deposits.length){
+          console.log('Found', resp.deposits.length, 'deposits');
+          html += '<h4>Recent deposits for '+name+':</h4>' +
+            '<table><tr><th>Date</th><th>Bottle</th><th>Qty</th><th>Cases</th><th>Amount</th></tr>' +
+            resp.deposits.map(d => `<tr><td>${d.date}</td><td>${d.bottle_type}</td><td>${d.quantity}</td><td>${d.with_case?d.case_quantity:'-'}</td><td>${d.amount? '₱'+d.amount:''}</td></tr>`).join('') +
+            '</table>';
+            // fill auto fields from latest deposit or from canonical customer info
+            const src = (resp.deposits && resp.deposits.length) ? resp.deposits[0] : resp.customer;
+            if(src){
+              console.log('Using source for autofill:', src);
+              document.getElementById('auto_bottle').value = src.bottle_type || '';
+              document.getElementById('auto_qty').value = src.quantity || '';
+              console.log('Auto fields filled');
+              // also fill the amount field
+              const amtInput = document.getElementById('amount');
+              console.log('Amount input found:', !!amtInput);
+              if(amtInput) { amtInput.value = (typeof src.amount !== 'undefined') ? src.amount : 0; console.log('Amount filled'); }
+            }
+        } else {
+          console.log('No deposits found in response');
+        }
+        if(resp.returns && resp.returns.length){
+          html += '<h4>Recent returns/refunds for '+name+':</h4>' +
+            '<table><tr><th>Date</th><th>Bottle</th><th>Qty</th><th>Cases</th></tr>' +
+            resp.returns.map(r => `<tr><td>${r.date}</td><td>${r.bottle_type}</td><td>${r.quantity}</td><td>${r.with_case? r.case_quantity : '-'}</td></tr>`).join('') +
+            '</table>';
+        }
+        historyDiv.innerHTML = html;
+      }).catch(err => {
+        console.error('Fetch error:', err);
+      });
+  } else {
+    historyDiv.innerHTML = '';
+    document.getElementById('auto_bottle').value = '';
+    document.getElementById('auto_qty').value = '';
+  }
+}
+
+if(custInput){
+  custInput.addEventListener('input', function(){ fetchCustomerData(this.value); });
+  custInput.addEventListener('change', function(){ fetchCustomerData(this.value); });
+  custInput.addEventListener('blur', function(){ 
+    console.log('Blur event fired, current value:', this.value);
+    fetchCustomerData(this.value); 
+  });
+}
+  });
+}
 </script>
 </body>
 </html>

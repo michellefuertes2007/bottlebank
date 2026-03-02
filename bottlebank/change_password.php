@@ -48,10 +48,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $log->bind_param('iss', $user_id, $action, $user['username']);
             $log->execute(); $log->close();
             
-            // log to password_log table
-            $pw_log = $conn->prepare("INSERT INTO password_log (user_id, change_type) VALUES (?, 'Self')");
-            $pw_log->bind_param('i', $user_id);
-            $pw_log->execute(); $pw_log->close();
+            // log to password_log table (explicitly set changed_by_id = NULL for self-change)
+            $pw_log = $conn->prepare("INSERT INTO password_log (user_id, changed_by_id, change_type) VALUES (?, NULL, 'Self')");
+            if ($pw_log) {
+              $pw_log->bind_param('i', $user_id);
+              if (!$pw_log->execute()) {
+                error_log('password_log insert failed (self change): ' . $pw_log->error);
+              }
+              $pw_log->close();
+            } else {
+              error_log('password_log prepare failed: ' . $conn->error);
+            }
 
             // clear session flag
             unset($_SESSION['force_change']);

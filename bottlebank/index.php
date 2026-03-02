@@ -29,6 +29,7 @@ function count_for_user($conn, $table, $user_id) {
 $deposit_count = count_for_user($conn, 'deposit', $user_id);
 $return_count  = count_for_user($conn, 'returns', $user_id);
 $refund_count  = count_for_user($conn, 'refund', $user_id);
+$return_refund_count = $return_count + $refund_count;  // combined count
 $log_count     = count_for_user($conn, 'stock_log', $user_id);
 ?>
 <!DOCTYPE html>
@@ -37,6 +38,7 @@ $log_count     = count_for_user($conn, 'stock_log', $user_id);
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Dashboard • BottleBank</title>
+<link rel="stylesheet" href="asset/style.css">
 <style>
 body {
     font-family: 'Poppins', sans-serif;
@@ -72,36 +74,7 @@ body {
     font-weight: 700;
     letter-spacing: -0.3px;
 }
-.sidebar-nav {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-.sidebar-nav a {
-    display: flex;
-    align-items: center;
-    padding: 14px 20px;
-    color: rgba(255,255,255,0.85);
-    text-decoration: none;
-    transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-    font-weight: 500;
-    font-size: 15px;
-    border-left: 4px solid transparent;
-    margin: 0 8px 0 0;
-}
-.sidebar-nav a:hover {
-    background: rgba(255,255,255,0.1);
-    border-left-color: #80cbc4;
-    color: #80cbc4;
-    padding-left: 20px;
-}
-.sidebar-nav a.active {
-    background: rgba(128,203,196,0.25);
-    border-left-color: #80cbc4;
-    color: #80cbc4;
-    padding-left: 20px;
-    font-weight: 600;
-}
+
 .sidebar-nav .logout {
     margin-top: auto;
     border-top: 2px solid rgba(255,255,255,0.1);
@@ -379,6 +352,15 @@ body {
 </style>
 </head>
 <body>
+<script>
+// early definition so inline onclick works even if later script loads slower
+function toggleSidebar(){
+  const sidebar = document.querySelector('.sidebar');
+  const overlay = document.querySelector('.sidebar-overlay');
+  if(sidebar) sidebar.classList.toggle('active');
+  if(overlay) overlay.classList.toggle('active');
+}
+</script>
 <!-- Sidebar Overlay -->
 <div class="sidebar-overlay" onclick="toggleSidebar()"></div>
 
@@ -388,13 +370,12 @@ body {
         <h1>BB</h1>
     </div>
     <nav class="sidebar-nav">
-        <a href="index.php" class="active">Dashboard</a>
+        <a href="index.php">Dashboard</a>
         <a href="deposit.php">Deposit</a>
         <a href="returns.php">Returns</a>
-        <a href="refund.php">Refund</a>
         <a href="stock_log.php">Stock Log</a>
         <?php if($is_admin): ?>
-        <a href="admin/admin_panel.php">Admin Panel</a>
+          <a href="/admin/admin_panel.php#users-section" > Users</a>
         <?php endif; ?>
         <a href="logout.php" class="logout">Logout</a>
     </nav>
@@ -421,14 +402,9 @@ body {
             <a class="link" href="deposit.php">Add / View Deposits →</a>
         </div>
         <div class="card">
-            <div class="label">Returns</div>
-            <div class="value"><?= $return_count ?></div>
-            <a class="link" href="returns.php">Add / View Returns →</a>
-        </div>
-        <div class="card">
-            <div class="label">Refunds</div>
-            <div class="value"><?= $refund_count ?></div>
-            <a class="link" href="refund.php">Add / View Refunds →</a>
+            <div class="label">Returns & Refunds</div>
+            <div class="value"><?= $return_refund_count ?></div>
+            <a class="link" href="returns.php">Add / View Returns & Refunds →</a>
         </div>
         <div class="card">
             <div class="label">Stock Log</div>

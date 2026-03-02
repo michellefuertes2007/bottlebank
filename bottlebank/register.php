@@ -3,6 +3,17 @@ include 'includes/db_connect.php';
 session_start();
 $error = "";
 
+// If an admin already exists, don't allow registration via this page
+$adminCheck = $conn->query("SELECT COUNT(*) as cnt FROM user WHERE role='admin'");
+if ($adminCheck) {
+    $acRow = $adminCheck->fetch_assoc();
+    if ($acRow && $acRow['cnt'] > 0) {
+        // redirect to login with message or simply disable
+        header("Location: login.php");
+        exit();
+    }
+}
+
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $username = trim($_POST['username']);
     $email = trim($_POST['email']);
@@ -17,7 +28,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     if ($result->num_rows > 0) {
         $error = "Username or email already taken.";
     } else {
-        $stmt = $conn->prepare("INSERT INTO user (username, email, password) VALUES (?, ?, ?)");
+        $stmt = $conn->prepare("INSERT INTO user (username, email, password, role) VALUES (?, ?, ?, 'admin')");
         $stmt->bind_param("sss", $username, $email, $password);
         if ($stmt->execute()) {
             header("Location: login.php?registered=1");
