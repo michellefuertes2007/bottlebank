@@ -190,9 +190,10 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] == "POST" && isset($_POST['edit_id']
     .field-stack { display:flex; flex-direction:column; }
     /* bottle size toggle buttons */
     .size-toggle { display:flex; gap:8px; }
-    .size-option { cursor:pointer; user-select:none; padding:8px 16px; border:2px solid #26a69a; border-radius:6px; color:#26a69a; transition:all .2s; font-weight:600; }
+    .size-option { cursor:pointer; user-select:none; padding:0; border:2px solid #26a69a; border-radius:6px; transition:all .2s; font-weight:600; display:flex; align-items:center; }
     .size-option input { display:none; }
-    .size-option input:checked + span { background:#26a69a; color:white; }
+    .size-option span { padding:8px 16px; color:#26a69a; display:block; }
+    .size-option input:checked ~ span { background:#26a69a; color:white; }
     .size-option:hover { background:rgba(38,166,154,.15); }
     .field-box input[type="number"] { width:60px; border:none; background:transparent; padding:6px; font-size:14px; text-align:center; }
   </style>

@@ -292,10 +292,10 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
     .form-row .col input:focus, .form-row .col select:focus { outline:none; border-color:#26a69a; box-shadow:0 0 4px rgba(38,166,154,0.2); }
     /* bottle size toggle buttons */
     .size-toggle { display:flex; gap:8px; }
-    .size-option { cursor:pointer; user-select:none; padding:8px 16px; border:2px solid #26a69a; border-radius:6px; color:#26a69a; transition:all .2s; font-weight:600; }
+    .size-option { cursor:pointer; user-select:none; padding:0; border:2px solid #26a69a; border-radius:6px; transition:all .2s; font-weight:600; display:flex; align-items:center; }
     .size-option input { display:none; }
-    /* checked state: background and white text */
-    .size-option input:checked + span { background:#26a69a; color:white; }
+    .size-option span { padding:8px 16px; color:#26a69a; display:block; }
+    .size-option input:checked ~ span { background:#26a69a; color:white; }
     .size-option:hover { background:rgba(38,166,154,.15); }
     button { padding:10px 15px; border:none; border-radius:6px; cursor:pointer; font-weight:600; transition:0.3s; }
     button.primary { background:#26a69a; color:white; }

@@ -303,24 +303,30 @@ tr:hover {
 }
 
 .button {
-  display: inline-block;
-  padding: 8px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 14px;
   min-width: 100px;
   text-align: center;
   border-radius: 6px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  border: none;
+  border: 1px solid #ccc;
   transition: all 0.3s ease;
   margin-right: 6px;
   margin-bottom: 6px;
+  background: #fff;
+  color: #000;
+}
 }
 
 .button:hover {
-  background: #2e7d7d;
+  background: #f0f0f0;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(38, 166, 154, 0.25);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .button.secondary {
@@ -333,11 +339,12 @@ tr:hover {
 }
 
 .button.danger {
-  background: #ef5350;
+  background: #80cbc4;
+  color: #004d40;
 }
 
 .button.danger:hover {
-  background: #e53935;
+  background: #4db6ac;
 }
 
 .button.info {
@@ -431,6 +438,24 @@ form button:hover {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.action-buttons form {
+  display: inline;
+  margin: 0;
+  padding: 0;
+}
+
+.action-buttons button {
+  padding: 0;
+  width: 100px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
 }
 
 .back-button {
@@ -501,35 +526,38 @@ function toggleSidebar(){
       style="padding: 10px; border: 2px solid #26a69a; border-radius: 6px; font-family: 'Poppins', sans-serif; font-size: 14px; width: 100%; max-width: 400px;">
 </div>
 
-<div id="addUserForm" style="display:none; margin-bottom:20px;">
-  <form method="post" style="max-width:400px;">
-    <h4>Add New User</h4>
-    <div class="form-row">
-      <div class="col">
-        <label for="add_username">Username</label>
-        <input id="add_username" type="text" name="username" required autocomplete="username">
+<div id="modalOverlay">
+  <div id="addUserForm">
+    <button id="closeModalBtn" type="button">&times;</button>
+    <form method="post">
+      <h4>Add New User</h4>
+      <div class="form-row">
+        <div class="col">
+          <label for="add_username">Username</label>
+          <input id="add_username" type="text" name="username" required autocomplete="username">
+        </div>
       </div>
-    </div>
-    <div class="form-row">
-      <div class="col">
-        <label for="add_email">Email</label>
-        <input id="add_email" type="email" name="email" required autocomplete="email">
+      <div class="form-row">
+        <div class="col">
+          <label for="add_email">Email</label>
+          <input id="add_email" type="email" name="email" required autocomplete="email">
+        </div>
       </div>
-    </div>
-    <div class="form-row">
-      <div class="col">
-        <label for="add_password">Password</label>
-        <input id="add_password" type="password" name="password" required autocomplete="new-password">
+      <div class="form-row">
+        <div class="col">
+          <label for="add_password">Password</label>
+          <input id="add_password" type="password" name="password" required autocomplete="new-password">
+        </div>
       </div>
-    </div>
-    <div class="form-row">
-      <div class="col">
-        <label for="add_confirm_password">Confirm Password</label>
-        <input id="add_confirm_password" type="password" name="confirm_password" required autocomplete="new-password">
+      <div class="form-row">
+        <div class="col">
+          <label for="add_confirm_password">Confirm Password</label>
+          <input id="add_confirm_password" type="password" name="confirm_password" required autocomplete="new-password">
+        </div>
       </div>
-    </div>
-    <button type="submit" name="create_user" class="button" style="padding: 10px 16px;">Add</button>
-  </form>
+      <button type="submit" name="create_user">Add User</button>
+    </form>
+  </div>
 </div>
 
 <!-- Results counter -->
@@ -877,20 +905,46 @@ if(searchInput) {
     });
 }
 
-// toggle add user form
-const showAddBtn = document.getElementById('showAddUser');
-const addFormDiv = document.getElementById('addUserForm');
-if(showAddBtn && addFormDiv) {
-    showAddBtn.addEventListener('click', function(){
-        if(addFormDiv.style.display === 'none' || addFormDiv.style.display === '') {
-            addFormDiv.style.display = 'block';
-            showAddBtn.textContent = '- Hide Form';
-        } else {
-            addFormDiv.style.display = 'none';
-            showAddBtn.textContent = '+ Add User';
-        }
-    });
-}
+// toggle add user form modal
+document.addEventListener('DOMContentLoaded', function() {
+    const showAddBtn = document.getElementById('showAddUser');
+    const modalOverlay = document.getElementById('modalOverlay');
+    const addFormDiv = document.getElementById('addUserForm');
+    const closeModalBtn = document.getElementById('closeModalBtn');
+
+    if(showAddBtn && modalOverlay && addFormDiv) {
+        showAddBtn.addEventListener('click', function(){
+            modalOverlay.classList.toggle('active');
+            addFormDiv.classList.toggle('modal-active');
+            if(addFormDiv.classList.contains('modal-active')) {
+                showAddBtn.textContent = '- Close Form';
+                document.getElementById('add_username').focus();
+            } else {
+                showAddBtn.textContent = '+ Add User';
+            }
+        });
+    }
+
+    // Close modal when clicking the close button
+    if(closeModalBtn && modalOverlay && addFormDiv) {
+        closeModalBtn.addEventListener('click', function(){
+            modalOverlay.classList.remove('active');
+            addFormDiv.classList.remove('modal-active');
+            if(showAddBtn) showAddBtn.textContent = '+ Add User';
+        });
+    }
+
+    // Close modal when clicking the overlay background
+    if(modalOverlay) {
+        modalOverlay.addEventListener('click', function(e){
+            if(e.target === modalOverlay) {
+                modalOverlay.classList.remove('active');
+                addFormDiv.classList.remove('modal-active');
+                if(showAddBtn) showAddBtn.textContent = '+ Add User';
+            }
+        });
+    }
+});
 
 // Reset search function
 function resetSearch() {
@@ -1024,6 +1078,116 @@ window.addEventListener('hashchange', function() {
 
 .section.active {
   display: block;
+}
+
+/* Modal styling */
+#modalOverlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 999;
+  justify-content: center;
+  align-items: center;
+}
+
+#modalOverlay.active {
+  display: flex;
+}
+
+#addUserForm {
+  display: none;
+}
+
+#addUserForm.modal-active {
+  display: block;
+  background: white;
+  padding: 30px;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  max-width: 500px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  animation: slideIn 0.3s ease-out;
+  position: relative;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+#addUserForm h4 {
+  margin-top: 0;
+  margin-bottom: 20px;
+  color: #2d6a6a;
+  font-size: 18px;
+}
+
+#addUserForm .form-row {
+  margin-bottom: 15px;
+}
+
+#addUserForm .form-row .col {
+  display: flex;
+  flex-direction: column;
+}
+
+#addUserForm .form-row label {
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #2d6a6a;
+  font-size: 14px;
+}
+
+#addUserForm .form-row input {
+  padding: 10px 12px;
+  border: 2px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: 'Poppins', sans-serif;
+  transition: all 0.3s ease;
+}
+
+#addUserForm .form-row input:focus {
+  outline: none;
+  border-color: #26a69a;
+  box-shadow: 0 0 6px rgba(38, 166, 154, 0.15);
+  background: #fafbfc;
+}
+
+#addUserForm button {
+  width: 100%;
+  padding: 12px 16px;
+  background: #26a69a;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 14px;
+  margin-top: 10px;
+}
+
+#addUserForm button:hover {
+  background: #2e7d7d;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(38, 166, 154, 0.25);
+}
+
+#closeModalBtn {
+  display: none;
 }
 </style>
 
