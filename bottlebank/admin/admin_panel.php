@@ -26,7 +26,7 @@ $stmt->bind_param("i", $_SESSION['user_id']);
 $stmt->execute();
 $user = $stmt->get_result()->fetch_assoc();
 
-if ($user['role'] !== 'admin') {
+if (!$user || $user['role'] !== 'admin') {
     // log access denied attempts
     $logFile = __DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'auth.log';
     $ip = $_SERVER['REMOTE_ADDR'] ?? 'cli';

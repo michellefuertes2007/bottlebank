@@ -33,3 +33,16 @@
 [2026-03-02 04:27:53] [127.0.0.1] LOGIN SUCCESS: user=admin id=1
 [2026-03-02 10:18:31] [127.0.0.1] LOGIN SUCCESS: user=ramo id=3
 [2026-03-06 22:16:42] [127.0.0.1] LOGIN SUCCESS: user=admin id=4
+[2026-03-07 18:39:09] [127.0.0.1] LOGIN FAILED: invalid password for user=admin
+[2026-03-07 18:39:16] [127.0.0.1] LOGIN FAILED: invalid password for user=admin
+[2026-03-07 18:40:15] [127.0.0.1] LOGIN SUCCESS: user=admin id=5
+[2026-03-07 11:49:25] [127.0.0.1] ACCESS DENIED: session_user_id=4
+[2026-03-07 11:49:52] [127.0.0.1] ACCESS DENIED: session_user_id=4
+[2026-03-07 11:50:00] [127.0.0.1] ACCESS DENIED: session_user_id=4
+[2026-03-07 11:50:12] [127.0.0.1] ACCESS DENIED: session_user_id=4
+[2026-03-07 11:50:14] [127.0.0.1] ACCESS DENIED: session_user_id=4
+[2026-03-07 11:50:27] [127.0.0.1] ACCESS DENIED: session_user_id=4
+[2026-03-07 11:50:28] [127.0.0.1] ACCESS DENIED: session_user_id=4
+[2026-03-07 11:50:28] [127.0.0.1] ACCESS DENIED: session_user_id=4
+[2026-03-07 11:50:28] [127.0.0.1] ACCESS DENIED: session_user_id=4
+[2026-03-07 19:50:40] [127.0.0.1] LOGIN SUCCESS: user=admin id=5
