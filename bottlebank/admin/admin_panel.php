@@ -173,6 +173,7 @@ $total_pages = ceil($total_users / $per_page);
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Admin Panel | BottleBank</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%2275%22 font-size=%2275%22 font-weight=%22bold%22 fill=%22%2326a69a%22%3EBB%3C/text%3E%3C/svg%3E" type="image/svg+xml">
 <link rel="stylesheet" href="../asset/style.css">
 <style>
 * {
@@ -314,37 +315,45 @@ tr:hover {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  border: 1px solid #ccc;
+  border: none;
   transition: all 0.3s ease;
   margin-right: 6px;
   margin-bottom: 6px;
-  background: #fff;
-  color: #000;
-}
+  background: #26a69a;
+  color: #fff;
 }
 
 .button:hover {
-  background: #f0f0f0;
+  background: #2e7d7d;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 4px 12px rgba(38, 166, 154, 0.25);
+}
+
+.button.primary {
+  background: #26a69a;
+  color: #fff;
+}
+
+.button.primary:hover {
+  background: #2e7d7d;
 }
 
 .button.secondary {
-  background: #80cbc4;
-  color: #004d40;
+  background: #26a69a;
+  color: #fff;
 }
 
 .button.secondary:hover {
-  background: #4db6ac;
+  background: #2e7d7d;
 }
 
 .button.danger {
-  background: #80cbc4;
-  color: #004d40;
+  background: #26a69a;
+  color: #fff;
 }
 
 .button.danger:hover {
-  background: #4db6ac;
+  background: #2e7d7d;
 }
 
 .button.info {
@@ -388,7 +397,7 @@ form button {
   transition: all 0.3s ease;
   font-family: 'Poppins', sans-serif;
   font-size: 14px;
-  margin-top: 8px;
+  margin-top: 0px;
 }
 
 form button:hover {
@@ -437,8 +446,9 @@ form button:hover {
 .action-buttons {
   display: flex;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
+  justify-content: flex-start;
   vertical-align: middle;
 }
 
@@ -448,6 +458,7 @@ form button:hover {
   padding: 0;
 }
 
+.action-buttons a,
 .action-buttons button {
   padding: 0;
   width: 100px;
@@ -456,6 +467,7 @@ form button:hover {
   align-items: center;
   justify-content: center;
   vertical-align: middle;
+  white-space: nowrap;
 }
 
 .back-button {
