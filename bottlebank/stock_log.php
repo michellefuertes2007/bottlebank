@@ -24,6 +24,79 @@ $filter_type = $_GET['filter_type'] ?? '';
 $filter_value = $_GET['filter_value'] ?? '';
 $search_query = isset($_GET['search']) ? trim($_GET['search']) : '';
 
+// Month name mapping
+$month_map = [
+    'january' => 1, 'jan' => 1,
+    'february' => 2, 'feb' => 2,
+    'march' => 3, 'mar' => 3,
+    'april' => 4, 'apr' => 4,
+    'may' => 5,
+    'june' => 6, 'jun' => 6,
+    'july' => 7, 'jul' => 7,
+    'august' => 8, 'aug' => 8,
+    'september' => 9, 'sep' => 9,
+    'october' => 10, 'oct' => 10,
+    'november' => 11, 'nov' => 11,
+    'december' => 12, 'dec' => 12
+];
+
+// Day of week mapping
+$day_map = [
+    'monday' => 2, 'mon' => 2,
+    'tuesday' => 3, 'tue' => 3, 'tues' => 3,
+    'wednesday' => 4, 'wed' => 4,
+    'thursday' => 5, 'thu' => 5, 'thurs' => 5,
+    'friday' => 6, 'fri' => 6,
+    'saturday' => 7, 'sat' => 7,
+    'sunday' => 1, 'sun' => 1
+];
+
+$is_month_search = false;
+$is_day_of_week_search = false;
+$is_day_of_month_search = false;
+$is_year_search = false;
+$month_number = null;
+$day_of_week = null;
+$day_of_month = null;
+$year_number = null;
+$search_display = '';
+
+// Check if search query is a month name, day name, day number, or year
+if ($search_query && !$filter_type) {
+    $search_lower = strtolower($search_query);
+    
+    // Check month
+    if (isset($month_map[$search_lower])) {
+        $month_number = $month_map[$search_lower];
+        $is_month_search = true;
+        $search_display = date('F', mktime(0, 0, 0, $month_number, 1));
+    }
+    // Check day of week
+    elseif (isset($day_map[$search_lower])) {
+        $day_of_week = $day_map[$search_lower];
+        $is_day_of_week_search = true;
+        $day_names = ['', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        $search_display = $day_names[$day_of_week];
+    }
+    // Check if it's a year (4 digits between 1900-2100)
+    elseif (preg_match('/^\d{4}$/', $search_query)) {
+        $year_number = (int)$search_query;
+        if ($year_number >= 1900 && $year_number <= 2100) {
+            $is_year_search = true;
+            $search_display = $year_number;
+        }
+    }
+    // Check if it's a day of month (1-31)
+    elseif (preg_match('/^\d{1,2}$/', $search_query)) {
+        $day_num = (int)$search_query;
+        if ($day_num >= 1 && $day_num <= 31) {
+            $day_of_month = $day_num;
+            $is_day_of_month_search = true;
+            $search_display = 'day ' . $day_of_month;
+        }
+    }
+}
+
 // Build WHERE clause and parameters safely
 $where_sql = "WHERE 1=1";
 $params = [];
@@ -34,6 +107,26 @@ if (!$is_admin) {
   $where_sql .= " AND user_id = ?";
   $types .= 'i';
   $params[] = $user_id;
+} elseif ($is_year_search) {
+  // Search by year
+  $where_sql .= " AND YEAR(date_logged) = ?";
+  $types .= 'i';
+  $params[] = $year_number;
+} elseif ($is_month_search) {
+  // Search by month name - show all transactions from that month across all years
+  $where_sql .= " AND MONTH(date_logged) = ?";
+  $types .= 'i';
+  $params[] = $month_number;
+} elseif ($is_day_of_week_search) {
+  // Search by day of week - show all transactions from that day across all weeks
+  $where_sql .= " AND DAYOFWEEK(date_logged) = ?";
+  $types .= 'i';
+  $params[] = $day_of_week;
+} elseif ($is_day_of_month_search) {
+  // Search by day of month - show all transactions from that day across all months
+  $where_sql .= " AND DAY(date_logged) = ?";
+  $types .= 'i';
+  $params[] = $day_of_month;
 } elseif ($search_query) {
   // Search across multiple columns: customer name, bottle type, action type, and numeric fields
   $where_sql .= " AND (customer_name LIKE ? OR bottle_type LIKE ? OR action_type LIKE ? OR CAST(quantity AS CHAR) LIKE ? OR CAST(amount AS CHAR) LIKE ? OR details LIKE ? )";
@@ -160,7 +253,7 @@ function toggleSidebar(){
   <div class="controls">
     <form method="get" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <?php if($is_admin): ?>
-      <input type="text" name="search" placeholder="Search by Customer, Action, Bottle, Size, Quantity, Amount, or Details..." value="<?= htmlspecialchars($search_query) ?>" style="flex:1;min-width:250px;">
+      <input type="text" name="search" placeholder="Search by Customer, Action, Bottle, Details... or Month (March), Day (Monday), Day# (15), Year (2026)" value="<?= htmlspecialchars($search_query) ?>" style="flex:1;min-width:250px;">
       <?php endif; ?>
 
       <label>Period:</label>
@@ -219,6 +312,24 @@ function toggleSidebar(){
         </script>
     </div>
 
+    <?php if($is_month_search): ?>
+    <div style="background:#e8f5e9;border:1px solid #4caf50;padding:12px;border-radius:6px;margin-bottom:15px;color:#2e7d00;font-weight:500;">
+        Showing all transactions from <?= $search_display ?> (all years)
+    </div>
+    <?php elseif($is_day_of_week_search): ?>
+    <div style="background:#e8f5e9;border:1px solid #4caf50;padding:12px;border-radius:6px;margin-bottom:15px;color:#2e7d00;font-weight:500;">
+        Showing all transactions from <?= $search_display ?> (all weeks)
+    </div>
+    <?php elseif($is_day_of_month_search): ?>
+    <div style="background:#e8f5e9;border:1px solid #4caf50;padding:12px;border-radius:6px;margin-bottom:15px;color:#2e7d00;font-weight:500;">
+        Showing all transactions from the <?= $search_display ?> of each month
+    </div>
+    <?php elseif($is_year_search): ?>
+    <div style="background:#e8f5e9;border:1px solid #4caf50;padding:12px;border-radius:6px;margin-bottom:15px;color:#2e7d00;font-weight:500;">
+        Showing all transactions from <?= $search_display ?>
+    </div>
+    <?php endif; ?>
+
     <table>
         <thead>
             <tr><th>ID</th><th>Action</th><th>Customer</th><th>Size</th><th>Bottle</th><th>Qty</th><th>With Case</th><th>Cases</th><th>Details</th><th>Amount</th><th>Date</th></tr>
@@ -235,8 +346,8 @@ function toggleSidebar(){
                 <td><?= ($row['with_case'] ? '✓ Yes' : '✗ No') ?></td>
                 <td><?= htmlspecialchars(!empty($row['case_quantity']) ? $row['case_quantity'] : '0') ?></td>
                 <td><?= htmlspecialchars(!empty($row['details']) ? $row['details'] : 'N/A') ?></td>
-                <td><?= htmlspecialchars(!empty($row['amount']) ? '₱' . $row['amount'] : 'N/A') ?></td>
-                <td><?= htmlspecialchars($row['date_logged']) ?></td>
+                <td><?= htmlspecialchars(!empty($row['amount']) ? '₱' . number_format($row['amount'], 2, '.', ',') : 'N/A') ?></td>
+                <td><?= date("M d, Y - h:i A", strtotime($row['date_logged'])) ?></td>
             </tr>
         <?php endwhile; else: ?>
             <tr><td colspan="9">No records found.</td></tr>

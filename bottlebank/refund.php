@@ -31,7 +31,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
         $stmt->bind_param('isd', $user_id, $cust_name, $amount);
         if ($stmt->execute()) {
             // log the refund with details
-            $details = "Refund — ₱" . number_format($amount, 2);
+            $details = "Refund — ₱" . number_format($amount, 2, '.', ',');
             $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, amount, details) VALUES (?, 'Refund', ?, ?, ?)");
             $log->bind_param('isds', $user_id, $cust_name, $amount, $details);
             $log->execute();
@@ -318,6 +318,12 @@ document.querySelectorAll('.sidebar-nav a').forEach(link => {
 const custInput = document.getElementById('customer_name');
 const historyDiv = document.getElementById('customerHistory');
 
+function formatDateTime(dateStr) {
+  const date = new Date(dateStr);
+  const options = { month: 'short', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true };
+  return date.toLocaleDateString('en-PH', options).replace(',', '').replace(/(\d+)(\s)/, '$1, ') + ' ' + date.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit', hour12: true});
+}
+
 function fetchCustomerData(name) {
   name = name.trim();
   console.log('Fetching data for customer:', name);
@@ -336,7 +342,7 @@ function fetchCustomerData(name) {
           console.log('Found', resp.deposits.length, 'deposits');
           html += '<h4>Recent deposits for '+name+':</h4>' +
             '<table><tr><th>Date</th><th>Bottle</th><th>Qty</th><th>Cases</th><th>Amount</th></tr>' +
-            resp.deposits.map(d => `<tr><td>${d.date}</td><td>${d.bottle_type}</td><td>${d.quantity}</td><td>${d.with_case?d.case_quantity:'-'}</td><td>${d.amount? '₱'+d.amount:''}</td></tr>`).join('') +
+            resp.deposits.map(d => `<tr><td>${formatDateTime(d.date)}</td><td>${d.bottle_type}</td><td>${d.quantity}</td><td>${d.with_case?d.case_quantity:'-'}</td><td>${d.amount? '₱'+parseFloat(d.amount).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}):''}</td></tr>`).join('') +
             '</table>';
             // fill auto fields from latest deposit or from canonical customer info
             const src = (resp.deposits && resp.deposits.length) ? resp.deposits[0] : resp.customer;
@@ -356,7 +362,7 @@ function fetchCustomerData(name) {
         if(resp.returns && resp.returns.length){
           html += '<h4>Recent returns/refunds for '+name+':</h4>' +
             '<table><tr><th>Date</th><th>Bottle</th><th>Qty</th><th>Cases</th></tr>' +
-            resp.returns.map(r => `<tr><td>${r.date}</td><td>${r.bottle_type}</td><td>${r.quantity}</td><td>${r.with_case? r.case_quantity : '-'}</td></tr>`).join('') +
+            resp.returns.map(r => `<tr><td>${formatDateTime(r.date)}</td><td>${r.bottle_type}</td><td>${r.quantity}</td><td>${r.with_case? r.case_quantity : '-'}</td></tr>`).join('') +
             '</table>';
         }
         historyDiv.innerHTML = html;

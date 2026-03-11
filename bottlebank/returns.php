@@ -61,7 +61,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
       $stmt = $conn->prepare("INSERT INTO refund (user_id, customer_name, amount, refund_date) VALUES (?, ?, ?, NOW())");
       $stmt->bind_param('isd', $user_id, $customer_name, $amount);
       if ($stmt->execute()) {
-        $details = "Refund — ₱" . number_format($amount, 2);
+        $details = "Refund — ₱" . number_format($amount, 2, '.', ',');
         $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, amount, details) VALUES (?, 'Refund', ?, ?, ?)");
         $log->bind_param('isds', $user_id, $customer_name, $amount, $details);
         $log->execute(); $log->close();
@@ -441,6 +441,12 @@ window.addEventListener('DOMContentLoaded', () => {
 // when customer name selected, fetch latest deposit info via AJAX
 let custInput, historyDiv, sizeRadios, quantityInput, withCaseCheckbox, caseQuantityInput;
 
+function formatDateTime(dateStr) {
+  const date = new Date(dateStr);
+  const options = { month: 'short', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true };
+  return date.toLocaleDateString('en-PH', options).replace(',', '').replace(/(\d+)(\s)/, '$1, ') + ' ' + date.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit', hour12: true});
+}
+
 function fetchCustomerData(name) {
   name = name.trim();
   console.log('Fetching data for customer:', name);
@@ -460,7 +466,7 @@ function fetchCustomerData(name) {
           console.log('Found', resp.deposits.length, 'deposits');
           html += '<h4>Recent deposits for '+name+':</h4>' +
             '<table><tr><th>Date</th><th>Bottle</th><th>Qty</th><th>Cases</th><th>Amount</th></tr>' +
-            resp.deposits.map(d => `<tr><td>${d.date}</td><td>${d.bottle_type || '-'}</td><td>${d.quantity || '-'}</td><td>${d.with_case?d.case_quantity:'-'}</td><td>${d.amount ? '₱'+d.amount : '-'}</td></tr>`).join('') +
+            resp.deposits.map(d => `<tr><td>${formatDateTime(d.date)}</td><td>${d.bottle_type || '-'}</td><td>${d.quantity || '-'}</td><td>${d.with_case?d.case_quantity:'-'}</td><td>${d.amount ? '₱'+parseFloat(d.amount).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '-'}</td></tr>`).join('') +
             '</table>';
             // auto-populate from latest deposit or canonical customer info
             const d0 = (resp.deposits && resp.deposits.length) ? resp.deposits[0] : resp.customer;
@@ -529,9 +535,9 @@ function fetchCustomerData(name) {
             resp.returns.map(r => {
               if (r.amount && !r.bottle_type) {
                 // refund row: no bottle/qty/cases
-                return `<tr><td>${r.date}</td><td>-</td><td>-</td><td>-</td><td>₱${parseFloat(r.amount).toFixed(2)}</td></tr>`;
+                return `<tr><td>${formatDateTime(r.date)}</td><td>-</td><td>-</td><td>-</td><td>₱${parseFloat(r.amount).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td></tr>`;
               } else {
-                return `<tr><td>${r.date}</td><td>${r.bottle_type || '-'}</td><td>${r.quantity || '-'}</td><td>${r.with_case? r.case_quantity : '-'}</td><td>-</td></tr>`;
+                return `<tr><td>${formatDateTime(r.date)}</td><td>${r.bottle_type || '-'}</td><td>${r.quantity || '-'}</td><td>${r.with_case? r.case_quantity : '-'}</td><td>-</td></tr>`;
               }
             }).join('') +
             '</table>';

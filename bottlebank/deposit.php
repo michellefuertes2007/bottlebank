@@ -484,7 +484,7 @@ function toggleSidebar(){
             type="text" 
             name="new_bottle_type" 
             id="bottleTypeInput"
-            placeholder="Enter new bottle type (e.g., Glass Jug, Carton)" 
+            placeholder="Enter new bottle type (e.g., Glass)" 
             minlength="3"
             maxlength="100"
             style="flex:1;min-width:200px;padding:10px;border:2px solid #26a69a;border-radius:6px;font-family:'Poppins',sans-serif;font-size:14px;transition:all 0.3s ease;"
