@@ -1,4 +1,7 @@
 <?php
+// Suppress warnings/notices that could break JSON output
+error_reporting(E_ALL);
+ini_set('display_errors', '0');
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, GET');
@@ -14,24 +17,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['customer'])) {
     
     // Fetch latest deposit entry from stock_log for this customer
     $s1 = $conn->prepare("SELECT bottle_type, quantity, amount, with_case, case_quantity, details, date_logged as date FROM stock_log WHERE action_type='Deposit' AND customer_name = ? ORDER BY date_logged DESC LIMIT 5");
-    $s1->bind_param('s', $cust);
-    $s1->execute();
-    $r1 = $s1->get_result();
-    while ($row = $r1->fetch_assoc()) {
-        $deposits[] = $row;
+    if ($s1) {
+        $s1->bind_param('s', $cust);
+        $s1->execute();
+        $r1 = $s1->get_result();
+        while ($row = $r1->fetch_assoc()) {
+            $deposits[] = $row;
+        }
+        $s1->close();
     }
-    $s1->close();
 
     // Fetch returns and refunds from stock_log
     // return entries may include refunds which record an amount instead of bottle info
     $s2 = $conn->prepare("SELECT bottle_type, quantity, with_case, case_quantity, amount, date_logged as date FROM stock_log WHERE action_type IN ('Return','Refund') AND customer_name = ? ORDER BY date_logged DESC LIMIT 5");
-    $s2->bind_param('s', $cust);
-    $s2->execute();
-    $r2 = $s2->get_result();
-    while ($row = $r2->fetch_assoc()) {
-        $returns[] = $row;
+    if ($s2) {
+        $s2->bind_param('s', $cust);
+        $s2->execute();
+        $r2 = $s2->get_result();
+        while ($row = $r2->fetch_assoc()) {
+            $returns[] = $row;
+        }
+        $s2->close();
     }
-    $s2->close();
 
     // also fetch canonical customer info if available
     $customerInfo = null;

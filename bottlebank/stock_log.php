@@ -247,7 +247,7 @@ function toggleSidebar(){
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><button class="toggle-sidebar" onclick="toggleSidebar()">Menu</button><div><h1>Stock Log</h1><p class="kv">View all transaction logs</p></div></div>
+    <div class="brand"><button class="toggle-sidebar" onclick="toggleSidebar()">☰</button><div><h1>Stock Log</h1><p class="kv">View all transaction logs</p></div></div>
     <div class="menu-wrap"><a href="index.php" class="kv">← Back to Dashboard</a></div>
   </div>
 

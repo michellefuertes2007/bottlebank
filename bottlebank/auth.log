@@ -55,3 +55,9 @@
 [2026-03-12 05:33:38] [127.0.0.1] LOGIN SUCCESS: user=admin id=8
 [2026-03-12 05:45:15] [127.0.0.1] LOGIN FAILED: invalid password for user=admin
 [2026-03-12 05:45:23] [127.0.0.1] LOGIN SUCCESS: user=admin id=8
+[2026-03-12 11:55:05] [127.0.0.1] LOGIN SUCCESS: user=admin id=9
+[2026-03-12 05:04:41] [127.0.0.1] ACCESS DENIED: session_user_id=9
+[2026-03-12 05:05:05] [127.0.0.1] ACCESS DENIED: session_user_id=9
+[2026-03-12 06:01:04] [127.0.0.1] ACCESS DENIED: session_user_id=9
+[2026-03-12 06:03:38] [127.0.0.1] ACCESS DENIED: session_user_id=9
+[2026-03-12 14:04:53] [127.0.0.1] LOGIN SUCCESS: user=admin id=1

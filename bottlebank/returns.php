@@ -41,66 +41,160 @@ if ($btResult) {
   }
 }
 
-// prepare distinct customer list from deposits for datalist/autofill
+// Validation function: Get customer's available bottles (deposits - returns)
+function getCustomerAvailableBottles($conn, $customer_name) {
+  $available_bottles = [];
+  
+  // Get all deposits for this customer from stock_log
+  $deposits_query = $conn->prepare("SELECT details FROM stock_log WHERE action_type='Deposit' AND customer_name = ? ORDER BY date_logged DESC");
+  if (!$deposits_query) return [];
+  
+  $deposits_query->bind_param('s', $customer_name);
+  $deposits_query->execute();
+  $deposits_result = $deposits_query->get_result();
+  
+  // Parse deposits to extract bottle info
+  $deposited = [];
+  while ($row = $deposits_result->fetch_assoc()) {
+    if (preg_match_all('/(\d+)x\s+(\w+(?:\s+\w+)?)\s+([^(]+)\s*\(₱([\d,]+\.\d{2})\)/', $row['details'], $matches)) {
+      for ($i = 0; $i < count($matches[0]); $i++) {
+        $bottle_type = trim($matches[2][$i]);
+        $bottle_size = trim($matches[3][$i]);
+        $qty = intval($matches[1][$i]);
+        
+        if (!isset($deposited[$bottle_type])) {
+          $deposited[$bottle_type] = ['size' => $bottle_size, 'qty' => 0];
+        }
+        $deposited[$bottle_type]['qty'] += $qty;
+      }
+    }
+  }
+  $deposits_query->close();
+  
+  // Get all returns for this customer
+  $returns_query = $conn->prepare("SELECT bottle_type, SUM(quantity) as total_returned FROM stock_log WHERE action_type='Return' AND customer_name = ? AND bottle_type IS NOT NULL GROUP BY bottle_type");
+  if (!$returns_query) return $available_bottles;
+  
+  $returns_query->bind_param('s', $customer_name);
+  $returns_query->execute();
+  $returns_result = $returns_query->get_result();
+  
+  $returned = [];
+  while ($row = $returns_result->fetch_assoc()) {
+    $returned[$row['bottle_type']] = intval($row['total_returned']);
+  }
+  $returns_query->close();
+  
+  // Calculate available bottles
+  foreach ($deposited as $bottle_type => $info) {
+    $available_qty = $info['qty'] - ($returned[$bottle_type] ?? 0);
+    if ($available_qty > 0) {
+      $available_bottles[$bottle_type] = [
+        'bottle_size' => $info['size'],
+        'available_qty' => $available_qty,
+        'deposited_qty' => $info['qty'],
+        'returned_qty' => $returned[$bottle_type] ?? 0
+      ];
+    }
+  }
+  return $available_bottles;
+}
+
+// Validation function: Check if a specific return is valid
+function validateReturnBottle($conn, $customer_name, $bottle_type, $bottle_size, $quantity) {
+  $available = getCustomerAvailableBottles($conn, $customer_name);
+  
+  // Check if bottle type exists in customer's deposits
+  if (!isset($available[$bottle_type])) {
+    return ['valid' => false, 'error' => "Customer did not deposit " . htmlspecialchars($bottle_type) . ". Available: " . (count($available) > 0 ? implode(', ', array_keys($available)) : 'none')];
+  }
+  
+  // Check if requested quantity is available
+  $available_qty = $available[$bottle_type]['available_qty'];
+  if ($quantity > $available_qty) {
+    return ['valid' => false, 'error' => "Only " . $available_qty . " of " . htmlspecialchars($bottle_type) . " available (" . $available[$bottle_type]['deposited_qty'] . " deposited, " . $available[$bottle_type]['returned_qty'] . " returned)"];
+  }
+  
+  return ['valid' => true];
+}
+
+// Prepare customer list: only show customers with unreturned deposits
 $deposit_customers = [];
-$cR = $conn->query("SELECT DISTINCT customer_name FROM deposit WHERE customer_name IS NOT NULL AND customer_name != '' ORDER BY customer_name ASC");
+$cR = $conn->query("SELECT DISTINCT customer_name FROM stock_log WHERE action_type='Deposit' AND customer_name IS NOT NULL AND customer_name != '' ORDER BY customer_name ASC");
 if ($cR) {
-  while ($r = $cR->fetch_assoc()) $deposit_customers[] = $r['customer_name'];
+  while ($r = $cR->fetch_assoc()) {
+    $customer = $r['customer_name'];
+    // Check if they have available bottles (not all returned)
+    $available = getCustomerAvailableBottles($conn, $customer);
+    if (count($available) > 0) {
+      $deposit_customers[] = $customer;
+    }
+  }
 }
 
 // Handle creation (return or refund)
 if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
   $customer_name = trim($_POST['customer_name'] ?? '');
   $amount = floatval($_POST['amount'] ?? 0);
-  $bottle_type = trim($_POST['bottle_type'] ?? '');
-  $quantity = intval($_POST['quantity'] ?? 0);
-  $bottle_size = trim($_POST['bottle_size'] ?? 'small');
-  $with_case = isset($_POST['with_case']) ? 1 : 0;
-  $case_quantity = isset($_POST['case_quantity']) ? intval($_POST['case_quantity']) : 0;
   
-  $has_bottles = ($bottle_type && $quantity > 0);
-  $has_amount = ($amount > 0);
-
   if (empty($customer_name)) {
     $error = 'Customer name is required.';
-  } elseif (!$has_bottles && !$has_amount) {
-    $error = 'Please enter either bottle details or an amount.';
+  } else if ($amount <= 0) {
+    $error = 'Refund amount is required and must be greater than 0.';
   } else {
     $success = true;
     
-    // Process RETURN if bottles provided
-    if ($has_bottles) {
-      if ($with_case && $case_quantity <= 0) {
-        $case_quantity = 1;
-      }
-      $stmt = $conn->prepare("INSERT INTO returns (user_id, customer_name, bottle_type, quantity, with_case, case_quantity, bottle_size, return_date) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())");
-      $stmt->bind_param('issiiis', $user_id, $customer_name, $bottle_type, $quantity, $with_case, $case_quantity, $bottle_size);
-      if ($stmt->execute()) {
-        $sizeLabel = $bottle_size === '1l' ? '1L' : '8/12oz';
-        $details = "Return — " . $quantity . " bottles (" . $bottle_type . ", " . $sizeLabel . ")";
-        $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, details, with_case, case_quantity) VALUES (?, 'Return', ?, ?, ?, ?, ?, ?)");
-        $log->bind_param('issisii', $user_id, $customer_name, $bottle_type, $quantity, $details, $with_case, $case_quantity);
-        $log->execute();
-        $log->close();
+    // Check if we have multi-bottle returns data
+    $return_rows = isset($_POST['return_bottles']) ? json_decode($_POST['return_bottles'], true) : [];
+    
+    if (!empty($return_rows)) {
+      // Process each return - VALIDATE first
+      foreach ($return_rows as $bottle) {
+        $bottle_type = trim($bottle['bottle_type'] ?? '');
+        $quantity = intval($bottle['quantity'] ?? 0);
+        $bottle_size = trim($bottle['bottle_size'] ?? 'small');
         
-        // automatically remove one matching deposit log entry for this customer/bottle/quantity
-        if($customer_name && $bottle_type && $quantity > 0) {
-          $del = $conn->prepare("DELETE FROM stock_log WHERE action_type='Deposit' AND customer_name=? AND bottle_type=? AND quantity=? LIMIT 1");
-          if($del) {
-            $del->bind_param('ssi', $customer_name, $bottle_type, $quantity);
-            $del->execute();
-            $del->close();
-          }
+        if (empty($bottle_type) || $quantity <= 0) {
+          continue; // Skip empty entries
         }
-      } else {
-        $error = 'Database error: ' . $stmt->error;
-        $success = false;
+        
+        // VALIDATE: Check if customer can return this bottle type with this quantity
+        $validation = validateReturnBottle($conn, $customer_name, $bottle_type, $bottle_size, $quantity);
+        if (!$validation['valid']) {
+          $error = $validation['error'];
+          $success = false;
+          break;
+        }
+        
+        // Get price per bottle from bottle_types
+        $price_query = $conn->prepare("SELECT price_per_bottle FROM bottle_types WHERE type_name = ?");
+        $price_query->bind_param('s', $bottle_type);
+        $price_query->execute();
+        $price_result = $price_query->get_result();
+        $price_row = $price_result->fetch_assoc();
+        $price_per_bottle = $price_row ? floatval($price_row['price_per_bottle']) : 0;
+        $return_amount = $quantity * $price_per_bottle;
+        $price_query->close();
+        
+        $stmt = $conn->prepare("INSERT INTO returns (user_id, customer_name, bottle_type, quantity, bottle_size, return_date) VALUES (?, ?, ?, ?, ?, NOW())");
+        $stmt->bind_param('issis', $user_id, $customer_name, $bottle_type, $quantity, $bottle_size);
+        if ($stmt->execute()) {
+          $details = "Return — " . $quantity . " x " . $bottle_type . " " . $bottle_size . " (₱" . number_format($price_per_bottle, 2) . ") | Return: ₱" . number_format($return_amount, 2, '.', ',');
+          $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, amount, details) VALUES (?, 'Return', ?, ?, ?, ?, ?)");
+          $log->bind_param('issids', $user_id, $customer_name, $bottle_type, $quantity, $return_amount, $details);
+          $log->execute();
+          $log->close();
+        } else {
+          $error = 'Database error: ' . $stmt->error;
+          $success = false;
+          break;
+        }
+        $stmt->close();
       }
-      $stmt->close();
     }
     
-    // Process REFUND if amount provided
-    if ($has_amount && $success) {
+    // Process REFUND (amount is now required)
+    if ($amount > 0 && $success) {
       $stmt = $conn->prepare("INSERT INTO refund (user_id, customer_name, amount, refund_date) VALUES (?, ?, ?, NOW())");
       $stmt->bind_param('isd', $user_id, $customer_name, $amount);
       if ($stmt->execute()) {
@@ -116,9 +210,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
       $stmt->close();
     }
     
-    if ($success) {
+    if ($success && (!empty($return_rows) || $amount > 0)) {
       $msg = 'Transaction recorded!';
       header("refresh:1;url=index.php");
+    } elseif (!empty($return_rows) || $amount > 0) {
+      // Already have error from above
     }
   }
 }
@@ -191,6 +287,8 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] == "POST" && isset($_POST['edit_id']
     button.ghost:hover { background:#4db6ac; }
     .notice { position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:20px 30px; background:#e9fbf1; border-left:4px solid #26a69a; border-radius:6px; color:#155724; font-weight:500; z-index:9999; box-shadow:0 4px 12px rgba(0,0,0,0.15); min-width:300px; text-align:center; margin-top:0 !important; }
     .error { position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:20px 30px; background:#ffecec; border-left:4px solid #ef5350; border-radius:6px; color:#c62828; font-weight:500; z-index:9999; box-shadow:0 4px 12px rgba(0,0,0,0.15); min-width:300px; text-align:center; margin-top:0 !important; }
+    @keyframes slideDown { from { opacity:0; transform:translate(-50%, -50%) translateY(-20px); } to { opacity:1; transform:translate(-50%, -50%) translateY(0); } }
+    @keyframes slideUp { from { opacity:1; transform:translate(-50%, -50%) translateY(0); } to { opacity:0; transform:translate(-50%, -50%) translateY(-20px); } }
     .toggle-sidebar { background:none; border:none; font-size:18px; cursor:pointer; color:#2d6a6a; font-weight:600; display:none; transition:0.3s; }
     @media (max-width:768px) { .toggle-sidebar { display:block; } }
     /* Shared field box style used for With Case and Number of Cases */
@@ -217,6 +315,24 @@ function toggleSidebar(){
   if(sidebar) sidebar.classList.toggle('active');
   if(overlay) overlay.classList.toggle('active');
 }
+
+// Auto-hide notifications after 4.5 seconds
+document.addEventListener('DOMContentLoaded', function() {
+  const notification = document.getElementById('notification');
+  const errorNotification = document.getElementById('error-notification');
+  
+  if(notification) {
+    setTimeout(() => {
+      notification.style.animation = 'slideUp 0.5s ease-in-out forwards';
+    }, 4500);
+  }
+  
+  if(errorNotification) {
+    setTimeout(() => {
+      errorNotification.style.animation = 'slideUp 0.5s ease-in-out forwards';
+    }, 4500);
+  }
+});
 </script>
 
 <div class="sidebar-overlay"></div>
@@ -239,12 +355,12 @@ function toggleSidebar(){
 
 <div class="app">
   <div class="topbar">
-  <div class="brand"><button class="toggle-sidebar">Menu</button><div><h1>Return</h1><p class="kv">Record and manage bottle returns</p></div></div>
+  <div class="brand"><button class="toggle-sidebar">☰</button><div><h1>Return</h1><p class="kv">Record and manage bottle returns</p></div></div>
   <div class="menu-wrap"><a href="index.php" class="kv">← Back to Dashboard</a></div>
   </div>
   
-  <?php if($msg): ?><div class="notice"><?=htmlspecialchars($msg)?></div><?php endif; ?>
-  <?php if($error): ?><div class="error"><?=htmlspecialchars($error)?></div><?php endif; ?>
+  <?php if($msg): ?><div class="notice" id="notification" style="display:flex;justify-content:space-between;align-items:center;animation: slideDown 0.3s ease-in-out;"><?=$msg?><button onclick="document.getElementById('notification').style.display='none'" style="background:none;border:none;color:inherit;cursor:pointer;font-size:18px;padding:0;">✕</button></div><?php endif; ?>
+  <?php if($error): ?><div class="error" id="error-notification" style="display:flex;justify-content:space-between;align-items:center;animation: slideDown 0.3s ease-in-out;"><?=htmlspecialchars($error)?><button onclick="document.getElementById('error-notification').style.display='none'" style="background:none;border:none;color:inherit;cursor:pointer;font-size:18px;padding:0;">✕</button></div><?php endif; ?>
 
   <div class="grid">
     <div class="panel" style="grid-column: span 12;">
@@ -328,52 +444,14 @@ function toggleSidebar(){
           </div>
           <div class="form-row">
             <div class="col">
-              <label>Amount to be Refunded</label>
-              <input type="number" step="0.01" min="0" name="amount" id="refund_amount" placeholder="₱ 0.00" value="0">
+              <label>Amount to be Refunded (Required)</label>
+              <input type="number" step="0.01" min="0" name="amount" id="refund_amount" placeholder="₱ 0.00" value="0" required>
             </div>
           </div>
-          <div class="form-row">
-            <div class="col">
-              <label>Bottle Type</label>
-              <select name="bottle_type" required>
-                <option value="">Select type...</option>
-                <?php foreach ($bottle_types_list as $type): ?>
-                  <option value="<?= htmlspecialchars($type['type_name']) ?>">
-                    <?= htmlspecialchars($type['type_name']) ?>
-                  </option>
-                <?php endforeach; ?>
-              </select>
-            </div>
-          </div>
-          <div class="form-row">
-            <div class="col">
-              <label>Bottle Size</label>
-              <div class="size-toggle">
-                <label class="size-option"><input type="radio" name="bottle_size" value="small" checked><span>8oz/12oz</span></label>
-                <label class="size-option"><input type="radio" name="bottle_size" value="1l"><span>1L</span></label>
-              </div>
-            </div>
-          </div>
-          <div class="form-row">
-            <div class="col">
-              <label>Quantity</label>
-              <input type="number" name="quantity" min="1" placeholder="Number of bottles" required>
-            </div>
-          </div>
-          <div class="form-row">
-            <div class="col field-stack" style="flex:0.5;">
-              <label class="field-label" for="with_case">With Case?</label>
-              <div class="field-box">
-                <input type="checkbox" name="with_case" id="with_case" style="width:18px;height:18px;cursor:pointer;margin:0;">
-              </div>
-            </div>
-            <div class="col field-stack" style="flex:0.5; display:none;" id="caseQuantityCol">
-              <label class="field-label">Number of Cases</label>
-              <div class="field-box">
-                <input type="number" name="case_quantity" id="case_quantity" min="0" placeholder="0" value="0">
-              </div>
-            </div>
-          </div>
+
+          <h4 style="margin:20px 0 10px 0;color:#2d6a6a;">Available Bottles to Return</h4>
+          <div style="border:1px solid #e0e0e0;border-radius:8px;padding:15px;background:#fafafa;margin-bottom:15px;" id="returnBottleList"></div>
+          
           <div style="display:flex;gap:12px;margin-top:20px">
             <button type="submit" class="primary">Record</button>
             <a href="index.php"><button type="button" class="ghost">Cancel</button></a>
@@ -436,14 +514,12 @@ window.addEventListener('DOMContentLoaded', () => {
         fetchCustomerDataEdit(preselectedName);
       },300);
     }
-  } else {
-    console.log('Edit form customer select NOT found');
   }
 
-  // compute cases handlers
+  // compute cases handlers only if elements exist
   if(quantityInput) quantityInput.addEventListener('input', computeCases);
   if(withCaseCheckbox) withCaseCheckbox.addEventListener('change', computeCases);
-  if(sizeRadios) sizeRadios.forEach(r=>r.addEventListener('change', computeCases));
+  if(sizeRadios && sizeRadios.length) sizeRadios.forEach(r=>r.addEventListener('change', computeCases));
   computeCases();
 });
 
@@ -727,6 +803,170 @@ document.querySelectorAll('.sidebar-nav a').forEach(link => {
     }
   });
 });
+
+// Multi-bottle return functionality
+let returnBottleCount = 0;
+let availableBottlesData = {};
+
+function formatPrice(num) {
+  return num.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function addReturnBottleRow() {
+  const container = document.getElementById('returnBottleList');
+  const rowId = 'return_bottle_' + (++returnBottleCount);
+  
+  const bottleOptions = Object.entries(availableBottlesData).map(([key, bottle]) => 
+    `<option value="${bottle.bottle_type}|${bottle.bottle_size}|${bottle.available_qty}">${bottle.bottle_type} ${bottle.bottle_size} (${bottle.available_qty} available)</option>`
+  ).join('');
+  
+  const html = `
+    <div class="return-bottle-row" id="${rowId}" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;padding:12px;background:white;border-radius:6px;border:1px solid #eee;">
+      <select onchange="updateReturnBottleInfo(this)" style="flex:1.2;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;">
+        <option value="">Select a bottle to return</option>
+        ${bottleOptions}
+      </select>
+      <input type="number" min="1" placeholder="Qty" class="return-quantity-input" style="width:70px;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;" onchange="updateReturnTotal()">
+      <div class="available-label" style="width:100px;color:#00796b;font-weight:600;padding:8px;border-radius:4px;text-align:right;">-</div>
+      <button type="button" onclick="removeReturnBottleRow('${rowId}')" style="padding:8px 12px;background:#ef5350;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">Remove</button>
+    </div>
+  `;
+  container.insertAdjacentHTML('beforeend', html);
+}
+
+function addReturnBottleRowWithData(bottle) {
+  const container = document.getElementById('returnBottleList');
+  const rowId = 'return_bottle_' + (++returnBottleCount);
+  
+  const html = `
+    <div class="return-bottle-row" id="${rowId}" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;padding:12px;background:white;border-radius:6px;border:1px solid #eee;">
+      <select onchange="updateReturnBottleInfo(this)" style="flex:1.2;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;">
+        <option value="${bottle.bottle_type}|${bottle.bottle_size}|${bottle.available_qty}" selected>${bottle.bottle_type} ${bottle.bottle_size} (${bottle.available_qty} available)</option>
+      </select>
+      <input type="number" min="1" max="${bottle.available_qty}" placeholder="Qty" class="return-quantity-input" style="width:70px;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;" onchange="updateReturnTotal()">
+      <div class="available-label" style="width:100px;color:#00796b;font-weight:600;padding:8px;border-radius:4px;text-align:right;">${bottle.available_qty} available</div>
+      <button type="button" onclick="removeReturnBottleRow('${rowId}')" style="padding:8px 12px;background:#ef5350;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">Remove</button>
+    </div>
+  `;
+  const rowElement = document.createElement('div');
+  rowElement.innerHTML = html;
+  const newRow = rowElement.firstElementChild;
+  const row = newRow;
+  row.dataset.bottleType = bottle.bottle_type;
+  row.dataset.bottleSize = bottle.bottle_size;
+  row.dataset.available = bottle.available_qty;
+  container.appendChild(newRow);
+}
+
+function updateReturnBottleInfo(select) {
+  const row = select.closest('.return-bottle-row');
+  const [bottle_type, bottle_size, available] = select.value.split('|');
+  row.dataset.bottleType = bottle_type;
+  row.dataset.bottleSize = bottle_size;
+  row.dataset.available = parseInt(available);
+  row.querySelector('.available-label').textContent = available + ' available';
+}
+
+function updateReturnTotal() {
+  let totalBottles = 0;
+  const returnList = document.getElementById('returnBottleList');
+  
+  returnList.querySelectorAll('.return-bottle-row').forEach(row => {
+    const qty = parseInt(row.querySelector('.return-quantity-input').value) || 0;
+    totalBottles += qty;
+  });
+}
+
+function removeReturnBottleRow(rowId) {
+  document.getElementById(rowId).remove();
+  updateReturnTotal();
+}
+
+// When customer is selected, fetch available bottles and auto-populate rows
+window.addEventListener('DOMContentLoaded', function() {
+  const custSelect = document.getElementById('customer_name');
+  if (custSelect) {
+    custSelect.addEventListener('change', function() {
+      const customerName = this.value;
+      const containerDiv = document.getElementById('returnBottleList');
+      
+      // Clear existing rows
+      containerDiv.innerHTML = '';
+      
+      if (customerName) {
+        fetch('api/returns.php?customer=' + encodeURIComponent(customerName))
+          .then(r => r.json())
+          .then(data => {
+            availableBottlesData = {};
+            // Auto-populate amount field with remaining refund
+            const amountField = document.getElementById('refund_amount');
+            if (data.remaining_refund_amount) {
+              amountField.value = data.remaining_refund_amount.toFixed(2);
+            }
+            
+            if (data.available_bottles && data.available_bottles.length > 0) {
+              data.available_bottles.forEach(bottle => {
+                const key = bottle.bottle_type + '_' + bottle.bottle_size;
+                availableBottlesData[key] = bottle;
+                // Automatically add a row for each available bottle
+                addReturnBottleRowWithData(bottle);
+              });
+              containerDiv.innerHTML = '<div style="padding:10px;background:#fff9e6;border:1px solid #ffe0b2;border-radius:4px;color:#e65100;font-size:13px;margin-bottom:15px;"><strong>✓ Bottles available to return (rows auto-populated below):</strong><br>' + data.available_bottles.map(b => `${b.bottle_type} ${b.bottle_size}: ${b.available_qty}/${b.deposited_qty}`).join(', ') + '<br><strong>Refund Amount:</strong> ₱' + (data.remaining_refund_amount || 0).toFixed(2) + '</div>' + containerDiv.innerHTML;
+            } else {
+              containerDiv.innerHTML = '<div style="padding:10px;background:#ffebee;border:1px solid #ef5350;border-radius:4px;color:#c62828;font-size:13px;">No bottles available to return for this customer</div>';
+              availableBottlesData = {};
+              amountField.value = '0.00';
+            }
+          })
+          .catch(err => console.error('Error fetching available bottles:', err));
+      } else {
+        containerDiv.innerHTML = '';
+        availableBottlesData = {};
+      }
+    });
+  }
+});
+
+// Multi-bottle returns form submission
+window.addEventListener('DOMContentLoaded', function() {
+  const returnForms = document.querySelectorAll('form[method="POST"]');
+  returnForms.forEach(returnForm => {
+    // Check if this is the return form (not edit form) by looking for returnBottleList
+    if (document.getElementById('returnBottleList') && !returnForm.querySelector('input[name="edit_id"]')) {
+      returnForm.addEventListener('submit', function(e) {
+        const returnList = document.getElementById('returnBottleList');
+        const returnBottles = [];
+        
+        returnList.querySelectorAll('.return-bottle-row').forEach(row => {
+          const qty = parseInt(row.querySelector('.return-quantity-input').value) || 0;
+          if (row.dataset.bottleType && qty > 0) {
+            returnBottles.push({
+              bottle_type: row.dataset.bottleType,
+              bottle_size: row.dataset.bottleSize,
+              quantity: qty
+            });
+          }
+        });
+        
+        const amount = parseFloat(document.getElementById('refund_amount').value) || 0;
+        
+        if (returnBottles.length > 0 || amount > 0) {
+          e.preventDefault();
+          // Create hidden input for multi-bottle returns
+          if (returnBottles.length > 0) {
+            let input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'return_bottles';
+            input.value = JSON.stringify(returnBottles);
+            this.appendChild(input);
+          }
+          this.submit();
+        }
+      });
+    }
+  });
+});
 </script>
+
 </body>
 </html>

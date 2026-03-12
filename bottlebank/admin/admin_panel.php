@@ -448,6 +448,17 @@ function toggleSidebar(){
   if(sidebar) sidebar.classList.toggle('active');
   if(overlay) overlay.classList.toggle('active');
 }
+
+// Auto-close sidebar when clicking nav links on mobile
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('.sidebar-nav a').forEach(link => {
+    link.addEventListener('click', function(){
+      if(window.innerWidth <= 768){
+        toggleSidebar();
+      }
+    });
+  });
+});
 </script>
 </head>
 <body>
@@ -474,7 +485,7 @@ function toggleSidebar(){
   <!-- Topbar (shared with other pages) -->
   <div class="topbar">
     <div class="brand">
-      <button class="toggle-sidebar" onclick="toggleSidebar()">Menu</button>
+      <button class="toggle-sidebar" onclick="toggleSidebar()">☰</button>
       <h1>Admin Panel</h1>
     </div>
     <div class="menu-wrap">

@@ -224,7 +224,7 @@ function toggleSidebar(){
 
   <div class="app">
   <div class="topbar">
-  <div class="brand"><button class="toggle-sidebar" onclick="toggleSidebar()">Menu</button><div class="logo">BB</div><div><h1>Refund</h1><p class="kv">Record and manage refunds</p></div></div>
+  <div class="brand"><button class="toggle-sidebar" onclick="toggleSidebar()">☰</button><div class="logo">BB</div><div><h1>Refund</h1><p class="kv">Record and manage refunds</p></div></div>
   <div class="menu-wrap"><a href="index.php" class="kv">← Back to Dashboard</a></div>
   </div>
 

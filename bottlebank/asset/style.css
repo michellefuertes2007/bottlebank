@@ -120,15 +120,23 @@ body {
 .topbar .toggle-sidebar {
   background: none;
   border: none;
-  font-size: 18px; /* match other pages */
+  font-size: 24px;
   cursor: pointer;
   color: #2d6a6a;
-  transition: 0.3s;
-  display: none !important; /* force hidden on desktop */
+  transition: all 0.3s ease;
+  display: none !important;
+  padding: 8px 12px;
+  height: 40px;
+  width: 40px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
 }
 
 .topbar .toggle-sidebar:hover {
   color: #00796b;
+  background: rgba(38, 166, 154, 0.1);
 }
 
 .menu-wrap {

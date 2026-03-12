@@ -387,7 +387,7 @@ function toggleSidebar(){
     <!-- Topbar -->
     <div class="topbar">
         <div class="brand">
-            <button class="toggle-sidebar" onclick="toggleSidebar()">Menu</button>
+            <button class="toggle-sidebar" onclick="toggleSidebar()">☰</button>
             <h1>Dashboard</h1>
         </div>
         <div class="menu-wrap">

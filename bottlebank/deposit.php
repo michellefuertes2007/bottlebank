@@ -33,9 +33,9 @@ ensureColumn($conn, 'returns', 'bottle_size', "bottle_size VARCHAR(10) DEFAULT '
 // stock_log also started recording size; add column if missing
 ensureColumn($conn, 'stock_log', 'bottle_size', "bottle_size VARCHAR(10) DEFAULT 'small'");
 
-// Get all bottle types from database
+// Get all bottle types with prices from database
 $bottle_types_list = [];
-$btResult = $conn->query("SELECT type_id, type_name FROM bottle_types ORDER BY type_name ASC");
+$btResult = $conn->query("SELECT type_id, type_name, bottle_size, price_per_bottle FROM bottle_types ORDER BY type_name ASC");
 if ($btResult) {
   while ($row = $btResult->fetch_assoc()) {
     $bottle_types_list[] = $row;
@@ -126,23 +126,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_bottle_type'])
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_bottle_type'])) {
   $new_type = trim($_POST['new_bottle_type'] ?? '');
+  $new_size = trim($_POST['new_bottle_size'] ?? 'small');
+  $new_price = floatval($_POST['new_price'] ?? 0);
   
   // Validation checks
   if (!$new_type) {
     $error = 'Please enter a bottle type name.';
-  } elseif (strlen($new_type) < 3) {
-    $error = 'Bottle type name must be at least 3 characters long.';
-  } elseif (strlen($new_type) > 100) {
-    $error = 'Bottle type name cannot exceed 100 characters.';
+  } elseif (strlen($new_type) < 2) {
+    $error = 'Bottle type name must be at least 2 characters.';
+  } elseif ($new_price < 0) {
+    $error = 'Price cannot be negative.';
   } else {
-    $stmt = $conn->prepare("INSERT INTO bottle_types (type_name, created_by) VALUES (?, ?)");
-    $stmt->bind_param("si", $new_type, $user_id);
+    $stmt = $conn->prepare("INSERT INTO bottle_types (type_name, bottle_size, price_per_bottle, created_by) VALUES (?, ?, ?, NULL)");
+    $stmt->bind_param("ssd", $new_type, $new_size, $new_price);
     
     try {
       if ($stmt->execute()) {
         // Refresh the bottle types list
         $bottle_types_list = [];
-        $btResult = $conn->query("SELECT type_id, type_name FROM bottle_types ORDER BY type_name ASC");
+        $btResult = $conn->query("SELECT type_id, type_name, bottle_size, price_per_bottle FROM bottle_types ORDER BY type_name ASC");
         if ($btResult) {
           while ($row = $btResult->fetch_assoc()) {
             $bottle_types_list[] = $row;
@@ -162,74 +164,93 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_bottle_type'])) {
   }
 }
 
-// Handle form submission for deposits
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['edit_id']) && !isset($_POST['add_bottle_type'])) {
+// Handle MULTI-BOTTLE DEPOSIT form submission
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['edit_id']) && !isset($_POST['add_bottle_type']) && isset($_POST['bottles_json'])) {
   $customer_name = trim($_POST['customer_name'] ?? '');
-  $bottle_type = trim($_POST['bottle_type'] ?? '');
-  $quantity = intval($_POST['quantity'] ?? 0);
-  $amount = floatval($_POST['amount'] ?? 0);
-  $bottle_size = trim($_POST['bottle_size'] ?? 'small'); // small or 1l
+  $bottles_json = $_POST['bottles_json'];
   
-  // Validate single bottle entry
-  if ($quantity <= 0) {
-    $error = 'Please enter a quantity greater than zero.';
-  } elseif ($amount < 0) {
-    $error = 'Amount cannot be negative.';
-  } elseif (!$bottle_type) {
-    $error = 'Please select a bottle type.';
+  if (empty($customer_name)) {
+    $error = 'Customer name is required.';
   } else {
-    // Get case information from form
-    $with_case = isset($_POST['with_case']) ? 1 : 0;
-    $case_quantity = isset($_POST['case_quantity']) ? intval($_POST['case_quantity']) : 0;
-    // If user indicated there is a case but left quantity empty or zero, default to 1
-    if ($with_case && $case_quantity <= 0) {
-      $case_quantity = 1;
+    $decoded = json_decode($bottles_json, true);
+    $manual_amount = null;
+    $bottles = [];
+    
+    // Handle both array format and object format with manual_amount
+    if (isset($decoded['bottles']) && isset($decoded['manual_amount'])) {
+      $bottles = $decoded['bottles'];
+      $manual_amount = floatval($decoded['manual_amount']);
+    } elseif (is_array($decoded) && !isset($decoded['bottles'])) {
+      $bottles = $decoded;
+    } else {
+      $bottles = $decoded;
     }
     
-    // insert single deposit
-    $ins = $conn->prepare("INSERT INTO deposit (user_id, customer_name, bottle_type, quantity, with_case, case_quantity, bottle_size, deposit_date) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())");
-    $ins->bind_param("issiiis", $user_id, $customer_name, $bottle_type, $quantity, $with_case, $case_quantity, $bottle_size);
-    if ($ins->execute()) {
-      // insert stock_log with formatted details including case info
-      $details = "Deposit — " . $quantity . " bottles (" . $bottle_type . ")";
-      if ($with_case && $case_quantity > 0) {
-        $details .= " with " . $case_quantity . " case" . ($case_quantity > 1 ? "s" : "");
-      }
-      $sizeLabel = $bottle_size === '1l' ? '1L' : '8/12oz';
-      // prepare full details including size for log
-      $fullDetails = $details . ' (' . $sizeLabel . ')';
-      $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, amount, details, with_case, case_quantity, bottle_size) VALUES (?, 'Deposit', ?, ?, ?, ?, ?, ?, ?, ?)");
-      // types: i user_id, s customer_name, s bottle_type, i quantity, d amount,
-      // s details, i with_case, i case_quantity, s bottle_size
-      $log->bind_param('issidsiis', $user_id, $customer_name, $bottle_type, $quantity, $amount, $fullDetails, $with_case, $case_quantity, $bottle_size);
-      $log->execute(); 
-      $log->close();
-
-      // Upsert a per-customer latest info record so future autofill can use it
-      // Ensure customers table exists (now tracks bottle_size)
-      $createCustomers = "CREATE TABLE IF NOT EXISTS customers (
-        customer_name VARCHAR(255) PRIMARY KEY,
-        bottle_type VARCHAR(255),
-        quantity INT,
-        amount DECIMAL(10,2),
-        with_case TINYINT(1),
-        case_quantity INT,
-        bottle_size VARCHAR(10) DEFAULT 'small',
-        last_deposit DATETIME
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
-      $conn->query($createCustomers);
-
-      $up = $conn->prepare("INSERT INTO customers (customer_name, bottle_type, quantity, amount, with_case, case_quantity, bottle_size, last_deposit) VALUES (?, ?, ?, ?, ?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE bottle_type=VALUES(bottle_type), quantity=VALUES(quantity), amount=VALUES(amount), with_case=VALUES(with_case), case_quantity=VALUES(case_quantity), bottle_size=VALUES(bottle_size), last_deposit=NOW()");
-      $up->bind_param('ssidiss', $customer_name, $bottle_type, $quantity, $amount, $with_case, $case_quantity, $bottle_size);
-      $up->execute();
-      if ($up) $up->close();
-
-      $msg = 'Deposit recorded successfully!';
-      header("refresh:1;url=index.php");
+    if (!$bottles || !is_array($bottles) || count($bottles) === 0) {
+      $error = 'Please add at least one bottle type to the deposit.';
     } else {
-      $error = 'Database error: ' . $ins->error;
+      $total_amount = 0;
+      $all_valid = true;
+      $deposit_summary = [];
+      
+      // Validate all bottles and calculate total
+      foreach ($bottles as $bottle) {
+        $bottle_type = trim($bottle['bottle_type'] ?? '');
+        $quantity = intval($bottle['quantity'] ?? 0);
+        $price_per_bottle = floatval($bottle['price_per_bottle'] ?? 0);
+        $bottle_size = $bottle['bottle_size'] ?? 'small';
+        
+        if (empty($bottle_type) || $quantity <= 0) {
+          $all_valid = false;
+          break;
+        }
+        
+        $subtotal = $quantity * $price_per_bottle;
+        $total_amount += $subtotal;
+        $deposit_summary[] = [
+          'bottle_type' => $bottle_type,
+          'bottle_size' => $bottle_size,
+          'quantity' => $quantity,
+          'price_per_bottle' => $price_per_bottle,
+          'subtotal' => $subtotal
+        ];
+      }
+      
+      // Use manual amount if provided
+      if ($manual_amount !== null && $manual_amount > 0) {
+        $total_amount = $manual_amount;
+      }
+      
+      if (!$all_valid) {
+        $error = 'Invalid bottle information. Please check all entries.';
+      } else {
+        // Create ONE deposit record with total amount
+        $deposit_details = implode(' + ', array_map(function($item) {
+          return $item['quantity'] . "x " . $item['bottle_type'] . " {$item['bottle_size']} (₱" . number_format($item['price_per_bottle'], 2, '.', ',') . ")";
+        }, $deposit_summary));
+        
+        $summary_type = count($deposit_summary) > 1 ? "Multiple" : $deposit_summary[0]['bottle_type'];
+        $summary_qty = array_sum(array_column($deposit_summary, 'quantity'));
+        
+        $ins = $conn->prepare("INSERT INTO deposit (user_id, customer_name, bottle_type, quantity, amount, deposit_date) VALUES (?, ?, ?, ?, ?, NOW())");
+        $ins->bind_param('issid', $user_id, $customer_name, $summary_type, $summary_qty, $total_amount);
+        
+        if ($ins->execute()) {
+          // Log to stock_log with detailed breakdown
+          $stock_details = "Deposit — " . $deposit_details . " | Total: ₱" . number_format($total_amount, 2, '.', ',');
+          $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, amount, details) VALUES (?, 'Deposit', ?, ?, ?, ?, ?)");
+          $log->bind_param('issiis', $user_id, $customer_name, $summary_type, $summary_qty, $total_amount, $stock_details);
+          $log->execute();
+          $log->close();
+          
+          $msg = '✓ Multi-bottle deposit recorded! Total: ₱' . number_format($total_amount, 2, '.', ',');
+          header("refresh:2;url=index.php");
+        } else {
+          $error = 'Database error: ' . $ins->error;
+        }
+        $ins->close();
+      }
     }
-    $ins->close();
   }
 }
 
@@ -305,6 +326,8 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
     button.ghost:hover { background:#4db6ac; }
     .notice { position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:20px 30px; background:#e9fbf1; border-left:4px solid #26a69a; border-radius:6px; color:#155724; font-weight:500; z-index:9999; box-shadow:0 4px 12px rgba(0,0,0,0.15); min-width:300px; text-align:center; margin-top:0 !important; }
     .error { position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:20px 30px; background:#ffecec; border-left:4px solid #ef5350; border-radius:6px; color:#c62828; font-weight:500; z-index:9999; box-shadow:0 4px 12px rgba(0,0,0,0.15); min-width:300px; text-align:center; margin-top:0 !important; }
+    @keyframes slideDown { from { opacity:0; transform:translate(-50%, -50%) translateY(-20px); } to { opacity:1; transform:translate(-50%, -50%) translateY(0); } }
+    @keyframes slideUp { from { opacity:1; transform:translate(-50%, -50%) translateY(0); } to { opacity:0; transform:translate(-50%, -50%) translateY(-20px); } }
     .topbar .toggle-sidebar { background:none; border:none; font-size:18px; cursor:pointer; color:#2d6a6a; font-weight:600; display:none; transition:0.3s; }
     .topbar .toggle-sidebar:hover { color:#00796b; }
     @media (max-width:768px) { .topbar .toggle-sidebar { display:block; } }
@@ -320,6 +343,24 @@ function toggleSidebar(){
   if(sidebar) sidebar.classList.toggle('active');
   if(overlay) overlay.classList.toggle('active');
 }
+
+// Auto-hide notifications after 4.5 seconds
+document.addEventListener('DOMContentLoaded', function() {
+  const notification = document.getElementById('notification');
+  const errorNotification = document.getElementById('error-notification');
+  
+  if(notification) {
+    setTimeout(() => {
+      notification.style.animation = 'slideUp 0.5s ease-in-out forwards';
+    }, 4500);
+  }
+  
+  if(errorNotification) {
+    setTimeout(() => {
+      errorNotification.style.animation = 'slideUp 0.5s ease-in-out forwards';
+    }, 4500);
+  }
+});
 </script>
 
 <!-- Sidebar Overlay -->
@@ -344,15 +385,15 @@ function toggleSidebar(){
   <div class="app">
   <div class="topbar">
     <div class="brand">
-        <button class="toggle-sidebar" onclick="toggleSidebar()">Menu</button><div><h1>Deposit</h1><p class="kv">Record and manage bottle deposits</p></div></div>
+        <button class="toggle-sidebar" onclick="toggleSidebar()">☰</button><div><h1>Deposit</h1><p class="kv">Record and manage bottle deposits</p></div></div>
     <div class="menu-wrap"><a href="index.php" class="kv">← Back to Dashboard</a></div>
   </div>
 
   <div class="grid" style="margin-top:8px;">
     <div class="panel" style="grid-column: span 12;">
       <h3 style="margin-top:0">New Deposit</h3>
-      <?php if($msg): ?><div class="notice"><?=$msg?></div><?php endif; ?>
-      <?php if($error): ?><div class="error"><?=htmlspecialchars($error)?></div><?php endif; ?>
+      <?php if($msg): ?><div class="notice" id="notification" style="display:flex;justify-content:space-between;align-items:center;animation: slideDown 0.3s ease-in-out;"><?=$msg?><button onclick="document.getElementById('notification').style.display='none'" style="background:none;border:none;color:inherit;cursor:pointer;font-size:18px;padding:0;">✕</button></div><?php endif; ?>
+      <?php if($error): ?><div class="error" id="error-notification" style="display:flex;justify-content:space-between;align-items:center;animation: slideDown 0.3s ease-in-out;"><?=htmlspecialchars($error)?><button onclick="document.getElementById('error-notification').style.display='none'" style="background:none;border:none;color:inherit;cursor:pointer;font-size:18px;padding:0;">✕</button></div><?php endif; ?>
 
       <?php if($is_admin && isset($editRow)): ?>
         <h3>Edit Deposit #<?= $editRow['deposit_id'] ?></h3>
@@ -396,69 +437,42 @@ function toggleSidebar(){
           </div>
         </form>
       <?php else: ?>
-      <form method="post" style="max-width:760px" id="depositForm">
-        <div class="bottle-entry" style="border:1px solid #e0e0e0;padding:15px;border-radius:6px;margin-bottom:15px;background:#fafafa;">
-          <div class="form-row">
-            <div class="col">
-              <label>Customer Name</label>
-              <input type="text" name="customer_name" id="customer_name" list="customer_list" required>
-              <datalist id="customer_list">
-                <?php foreach($deposit_customers as $c): ?>
-                  <option value="<?= htmlspecialchars($c) ?>">
-                <?php endforeach; ?>
-              </datalist>
-            </div>
+      <form method="post" style="max-width:800px" id="depositForm">
+        <h4 style="margin-bottom:15px;color:#2d6a6a;">Customer Information</h4>
+        <div class="form-row" style="margin-bottom:25px;">
+          <div class="col" style="min-width:100%; flex:1;">
+            <label>Customer Name</label>
+            <input type="text" name="customer_name" id="customer_name" list="customer_list" placeholder="Enter customer name" required>
+            <datalist id="customer_list">
+              <?php foreach($deposit_customers as $c): ?>
+                <option value="<?= htmlspecialchars($c) ?>">
+              <?php endforeach; ?>
+            </datalist>
           </div>
-          
-          <div class="form-row">
-            <div class="col">
-              <label>Bottle Type</label>
-              <select name="bottle_type" required>
-                <option value="">Select a bottle type</option>
-                <?php foreach ($bottle_types_list as $type): ?>
-                  <option value="<?= htmlspecialchars($type['type_name']) ?>"><?= htmlspecialchars($type['type_name']) ?></option>
-                <?php endforeach; ?>
-              </select>
-            </div>
-            <div class="col">
-              <label>Bottle Size</label>
-              <div class="size-toggle">
-                <label class="size-option"><input type="radio" name="bottle_size" value="small" checked><span>8oz/12oz</span></label>
-                <label class="size-option"><input type="radio" name="bottle_size" value="1l"><span>1L</span></label>
-              </div>
-            </div>
-            <div class="col">
-              <label>Quantity</label>
-              <input type="number" name="quantity" min="1" placeholder="Number of bottles" required>
-            </div>
-          </div>
+        </div>
 
-          <div class="form-row">
-            <div class="col">
-              <label>Amount (optional)</label>
-              <input type="number" step="0.01" name="amount" min="0" placeholder="₱ 0.00">
-            </div>
-            <div class="col">
-              <label>With Case?</label>
-              <div style="display:flex;gap:10px;align-items:center;height:40px;border:1px solid #ddd;border-radius:6px;padding:10px;background:#f9f9f9;">
-                <input type="checkbox" name="with_case" id="with_case" style="width:18px;height:18px;cursor:pointer;margin:0;">
-                <label for="with_case" style="margin:0;cursor:pointer;font-weight:500;flex:1;">Include case with deposit</label>
-              </div>
-            </div>
-          </div>
+        <h4 style="margin:20px 0 10px 0;color:#2d6a6a;">Select Bottles to Deposit</h4>
+        <div style="border:1px solid #e0e0e0;border-radius:8px;padding:15px;background:#fafafa;margin-bottom:15px;" id="bottleList"></div>
+        
+        <div style="margin-bottom:20px;">
+          <button type="button" onclick="addBottleRow()" class="primary" style="background:#80cbc4;padding:10px 16px;border-radius:6px;border:none;color:#004d40;font-weight:600;cursor:pointer;">+ Add Bottle Type</button>
+        </div>
 
-          <div class="form-row" id="caseQuantityRow" style="display:none;">
-            <div class="col">
-              <label>Number of Cases</label>
-              <input type="number" name="case_quantity" id="case_quantity" min="0" placeholder="0" value="0">
+        <div style="border-top:2px solid #26a69a;padding-top:15px;margin-top:15px;">
+          <div style="display:flex;align-items:flex-start;gap:20px;justify-content:space-between;">
+            <div>
+              <div style="color:#666;font-size:14px;font-weight:600;margin-bottom:5px;">Calculated Total:</div>
+              <div style="font-size:28px;font-weight:700;color:#26a69a;" id="totalAmount">₱0.00</div>
+            </div>
+            <div>
+              <label style="color:#666;font-size:13px;font-weight:600;display:block;margin-bottom:8px;">Or Enter Manual Amount:</label>
+              <input type="number" step="0.01" min="0" id="manualAmount" name="manual_amount" placeholder="Override total" style="width:150px;padding:10px;border:2px solid #26a69a;border-radius:4px;font-size:14px;font-weight:600;color:#26a69a;">
             </div>
           </div>
         </div>
 
-        <div style="display:flex;gap:12px;margin-top:20px;flex-wrap:wrap;align-items:center;">
-          <button type="submit" class="primary">Save Deposit</button>
-          <a href="index.php"><button type="button" class="ghost" style="background:#e0e0e0;color:#666;">Cancel</button></a>
-        </div>
+        <button type="submit" class="primary" style="margin-top:25px;width:100%;padding:12px;background:#26a69a;color:white;border:none;border-radius:6px;font-weight:600;cursor:pointer;font-size:14px;">Record Multi-Bottle Deposit</button>
+        <input type="hidden" name="bottles_json" id="bottles_json" value="[]">
       </form>
 
       <!-- Add New Bottle Type Section -->
@@ -472,7 +486,7 @@ function toggleSidebar(){
           <div style="display:flex;flex-wrap:wrap;gap:6px;">
             <?php foreach ($bottle_types_list as $type): ?>
               <div style="background:#26a69a;color:white;padding:5px 10px;border-radius:4px;font-size:12px;font-weight:500;display:flex;gap:6px;align-items:center;">
-                <span><?= htmlspecialchars($type['type_name']) ?></span>
+                <span><?= htmlspecialchars($type['type_name']) ?> <?= htmlspecialchars($type['bottle_size']) ?> ₱<?= number_format($type['price_per_bottle'], 2) ?></span>
                 <button type="button" class="edit-btn" onclick="editBottleType(<?= $type['type_id'] ?>, '<?= htmlspecialchars(addslashes($type['type_name'])) ?>')" style="background:none;border:none;color:white;cursor:pointer;padding:0;font-size:12px;opacity:0.8;" title="Edit">✎</button>
                 <button type="button" class="delete-btn" onclick="deleteBottleType(<?= $type['type_id'] ?>, '<?= htmlspecialchars(addslashes($type['type_name'])) ?>')" style="background:none;border:none;color:white;cursor:pointer;padding:0;font-size:12px;opacity:0.8;" title="Delete">✕</button>
               </div>
@@ -480,133 +494,36 @@ function toggleSidebar(){
           </div>
         </div>
         
-        <form method="post" style="display:flex;gap:10px;flex-wrap:wrap;" id="addBottleTypeForm">
+        <form method="post" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;" id="addBottleTypeForm">
           <input 
             type="text" 
             name="new_bottle_type" 
-            id="bottleTypeInput"
-            placeholder="Enter new bottle type (e.g., Glass)" 
-            minlength="3"
-            maxlength="100"
-            style="flex:1;min-width:200px;padding:10px;border:2px solid #26a69a;border-radius:6px;font-family:'Poppins',sans-serif;font-size:14px;transition:all 0.3s ease;"
-            title="Bottle type name must be 3-100 characters. Example: Glass Jug, Carton Box, Aluminum Can">
-          <button type="submit" name="add_bottle_type" class="primary" style="white-space:nowrap;padding:10px 15px;" onclick="return confirmAddBottleType()">Add Type</button>
+            placeholder="Bottle Type (e.g., Coke)" 
+            minlength="2"
+            style="flex:1;min-width:120px;padding:10px;border:2px solid #26a69a;border-radius:6px;font-family:'Poppins',sans-serif;font-size:14px;"
+            required>
+          <input 
+            type="text" 
+            name="new_bottle_size" 
+            placeholder="Size (e.g., 8oz, 500ml)" 
+            minlength="2"
+            style="flex:0.8;min-width:90px;padding:10px;border:2px solid #26a69a;border-radius:6px;font-family:'Poppins',sans-serif;font-size:14px;"
+            required>
+          <input 
+            type="number" 
+            name="new_price" 
+            placeholder="Price (₱)" 
+            step="0.01"
+            min="0"
+            style="flex:0.6;min-width:80px;padding:10px;border:2px solid #26a69a;border-radius:6px;font-family:'Poppins',sans-serif;font-size:14px;"
+            required>
+          <button type="submit" name="add_bottle_type" class="primary" style="white-space:nowrap;padding:10px 16px;background:#26a69a;color:white;border:none;border-radius:6px;font-weight:600;cursor:pointer;">Add Type</button>
         </form>
-        
-        <div id="similarWarning" style="margin-top:8px;padding:8px;background:#fff3cd;border-left:3px solid #ffc107;color:#856404;border-radius:4px;display:none;font-size:12px;"></div>
-        
-        <p style="color:#666;font-size:11px;margin-top:8px;">
-          <strong>Requirements:</strong> 3-100 characters, no duplicates allowed
-        </p>
       </div>
 
 
       <script>
-      // Handle "With Case?" checkbox toggle
-      const withCaseCheckbox = document.getElementById('with_case');
-      const caseQuantityRow = document.getElementById('caseQuantityRow');
-      const caseQuantityInput = document.getElementById('case_quantity');
-      const sizeRadiosDep = document.querySelectorAll('input[name="bottle_size"]');
-      const qtyInputDep = document.querySelector('input[name="quantity"]');
-
-      // when customer name selected, fetch latest deposit info via AJAX
-      const custInput = document.getElementById('customer_name');
-      function fetchCustomerData(name) {
-        name = name.trim();
-        console.log('Deposit: fetchCustomerData called for', name);
-        if(name){
-          const url = 'api/deposit.php?customer=' + encodeURIComponent(name);
-          console.log('Fetching:', url);
-          fetch(url)
-            .then(r => { console.log('Status', r.status); return r.json(); })
-            .then(resp => {
-              console.log('Deposit API response', resp);
-              const src = (resp.deposits && resp.deposits.length) ? resp.deposits[0] : resp.customer;
-              console.log('Using source for autofill', src);
-              if(src){
-                const bt = src.bottle_type || '';
-                const qty = src.quantity || '';
-                const amt = (typeof src.amount !== 'undefined') ? src.amount : '';
-                const withCaseVal = src.with_case;
-                const caseQtyVal = src.case_quantity;
-                const sizeVal = src.bottle_size || '';
-                const select = document.querySelector('select[name="bottle_type"]');
-                if(select){
-                  for(const opt of select.options){
-                    if(opt.value === bt){ opt.selected = true; break; }
-                  }
-                }
-                const qtyInput = document.querySelector('input[name="quantity"]');
-                if(qtyInput) qtyInput.value = qty;
-                const amtInput = document.querySelector('input[name="amount"]');
-                if(amtInput) amtInput.value = amt;
-                if(withCaseVal){
-                  if(withCaseCheckbox){ withCaseCheckbox.checked = true; withCaseCheckbox.dispatchEvent(new Event('change')); }
-                  if(caseQuantityInput) caseQuantityInput.value = caseQtyVal;
-                } else {
-                  if(withCaseCheckbox){ withCaseCheckbox.checked = false; withCaseCheckbox.dispatchEvent(new Event('change')); }
-                }
-                // set size radio if we know it
-                if(sizeVal){
-                  const r = document.querySelector(`input[name="bottle_size"][value="${sizeVal}"]`);
-                  if(r) r.checked = true;
-                } else if(resp.deposits && resp.deposits.length && resp.deposits[0].details){
-                  const m = resp.deposits[0].details.match(/\((1L|8\/12oz)\)$/);
-                  if(m){
-                    const parsed = m[1] === '1L' ? '1l' : 'small';
-                    const r2 = document.querySelector(`input[name="bottle_size"][value="${parsed}"]`);
-                    if(r2) r2.checked = true;
-                  }
-                }
-              }
-            }).catch(err => console.error('Fetch error', err));
-        }
-      }
-      if(custInput){
-        custInput.addEventListener('input', function(){ fetchCustomerData(this.value); });
-        custInput.addEventListener('change', function(){ fetchCustomerData(this.value); });
-        custInput.addEventListener('blur', function(){ fetchCustomerData(this.value); });
-      }
-
-      if (withCaseCheckbox) {
-        // Show/hide case quantity input based on checkbox and set sensible defaults
-        withCaseCheckbox.addEventListener('change', function() {
-          if (this.checked) {
-            caseQuantityRow.style.display = 'flex';
-            caseQuantityInput.value = '1';
-            caseQuantityInput.required = true;
-            caseQuantityInput.focus();
-          } else {
-            caseQuantityRow.style.display = 'none';
-            caseQuantityInput.value = '0';
-            caseQuantityInput.required = false;
-          }
-          computeCasesDep();
-        });
-      }
-
-      function computeCasesDep(){
-        if(withCaseCheckbox && withCaseCheckbox.checked && qtyInputDep){
-          const qty = parseInt(qtyInputDep.value) || 0;
-          let size = 'small';
-          const sel = document.querySelector('input[name="bottle_size"]:checked');
-          if(sel) size = sel.value;
-          const factor = size === '1l' ? 12 : 24;
-          caseQuantityInput.value = Math.floor(qty / factor);
-        }
-      }
-
-      if(qtyInputDep) qtyInputDep.addEventListener('input', computeCasesDep);
-      sizeRadiosDep.forEach(r=>r.addEventListener('change', computeCasesDep));
-
-      // Existing bottle types from PHP
-      const existingTypes = [
-        <?php foreach ($bottle_types_list as $type) { 
-          echo "'" . addslashes($type['type_name']) . "',"; 
-        } ?>
-      ];
-
-      // Edit bottle type
+      // Required functions for bottle type management
       function editBottleType(typeId, typeName) {
         const newName = prompt('Edit bottle type name:', typeName);
         if (newName !== null && newName.trim()) {
@@ -623,7 +540,6 @@ function toggleSidebar(){
         }
       }
 
-      // Delete bottle type
       function deleteBottleType(typeId, typeName) {
         if (confirm('Delete bottle type "' + typeName + '"?\n\nThis action cannot be undone.')) {
           const form = document.createElement('form');
@@ -637,83 +553,6 @@ function toggleSidebar(){
           document.body.removeChild(form);
         }
       }
-
-      // Calculate similarity score between two strings
-      function calculateSimilarity(str1, str2) {
-        str1 = str1.toLowerCase().trim();
-        str2 = str2.toLowerCase().trim();
-        
-        if (str1 === str2) return 100;
-        
-        let matches = 0;
-        let maxLen = Math.max(str1.length, str2.length);
-        
-        for (let i = 0; i < maxLen; i++) {
-          if (str1[i] === str2[i]) matches++;
-        }
-        
-        return (matches / maxLen) * 100;
-      }
-
-      // Check for similar types as user types
-      document.getElementById('bottleTypeInput').addEventListener('input', function() {
-        const input = this.value.trim();
-        const warningDiv = document.getElementById('similarWarning');
-        
-        if (!input) {
-          warningDiv.style.display = 'none';
-          return;
-        }
-        
-        // Find similar types
-        let similar = [];
-        existingTypes.forEach(type => {
-          const similarity = calculateSimilarity(input, type);
-          if (similarity >= 70 && similarity < 100) {
-            similar.push({ name: type, score: similarity });
-          }
-        });
-        
-        // Show warning if similar types found
-        if (similar.length > 0) {
-          similar.sort((a, b) => b.score - a.score);
-          let message = '⚠️ Similar type(s) found: <strong>' + similar.map(s => s.name).join(', ') + '</strong><br>Did you mean one of these? Check the list above.';
-          warningDiv.innerHTML = message;
-          warningDiv.style.display = 'block';
-        } else {
-          warningDiv.style.display = 'none';
-        }
-      });
-
-      // Confirm before adding
-      function confirmAddBottleType() {
-        const input = document.getElementById('bottleTypeInput').value.trim();
-        
-        if (!input) {
-          alert('Please enter a bottle type name.');
-          return false;
-        }
-        
-        if (input.length < 3) {
-          alert('Bottle type must be at least 3 characters.');
-          return false;
-        }
-        
-        // Check for exact duplicate
-        if (existingTypes.some(type => type.toLowerCase() === input.toLowerCase())) {
-          alert('This bottle type already exists!\n\nPlease check the list above or use a different name.');
-          return false;
-        }
-        
-        // Confirm addition
-        return confirm('Add new bottle type: "' + input + '"?\n\nThis will be available for all deposits.');
-      }
-
-      function toggleSidebar(){
-        document.querySelector('.sidebar').classList.toggle('show');
-        document.querySelector('.sidebar-overlay').classList.toggle('show');
-      }
-      document.querySelector('.sidebar-overlay').addEventListener('click', toggleSidebar);
       </script>
     </div>
   </div>
@@ -736,6 +575,158 @@ document.querySelectorAll('.sidebar-nav a').forEach(link => {
     }
   });
 });
+
+// Multi-bottle deposit functionality
+const bottleTypes = <?php echo json_encode(array_map(fn($b) => [
+  'type_name' => $b['type_name'],
+  'bottle_size' => $b['bottle_size'],
+  'price_per_bottle' => (float)$b['price_per_bottle']
+], $bottle_types_list)); ?>;
+
+let bottleCount = 0;
+
+// Format number with comma separators (e.g., 1000.00 -> 1,000.00)
+function formatPrice(num) {
+  return num.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function addBottleRow() {
+  const container = document.getElementById('bottleList');
+  const rowId = 'bottle_' + (++bottleCount);
+  
+  const html = `
+    <div class="bottle-row" id="${rowId}" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;padding:12px;background:white;border-radius:6px;border:1px solid #eee;">
+      <select onchange="updateBottleInfo(this)" style="flex:1.2;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;">
+        <option value="">Select a bottle type</option>
+        ${bottleTypes.map(b => `<option value="${b.type_name}|${b.bottle_size}|${b.price_per_bottle}">${b.type_name} ${b.bottle_size}</option>`).join('')}
+      </select>
+      <input type="number" min="1" placeholder="Qty" class="quantity-input" style="width:70px;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;" onchange="updateTotal()">
+      <div class="price-display" style="width:80px;color:#00796b;font-weight:600;padding:8px;border-radius:4px;text-align:right;">₱0.00</div>
+      <div class="subtotal" style="width:80px;color:#26a69a;font-weight:600;padding:8px;border-radius:4px;text-align:right;">₱0.00</div>
+      <button type="button" onclick="removeBottleRow('${rowId}')" style="padding:8px 12px;background:#ef5350;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">Remove</button>
+    </div>
+  `;
+  container.insertAdjacentHTML('beforeend', html);
+}
+
+function updateBottleInfo(select) {
+  const row = select.closest('.bottle-row');
+  const [type, size, price] = select.value.split('|');
+  const priceNum = parseFloat(price);
+  row.dataset.bottleType = type;
+  row.dataset.bottleSize = size;
+  row.dataset.pricePerBottle = priceNum;
+  row.querySelector('.price-display').textContent = '₱' + formatPrice(priceNum);
+  updateTotal();
+}
+
+function updateTotal() {
+  let total = 0;
+  const bottleList = document.getElementById('bottleList');
+  
+  bottleList.querySelectorAll('.bottle-row').forEach(row => {
+    const qty = parseInt(row.querySelector('.quantity-input').value) || 0;
+    const price = parseFloat(row.dataset.pricePerBottle) || 0;
+    const subtotal = qty * price;
+    row.querySelector('.subtotal').textContent = '₱' + formatPrice(subtotal);
+    total += subtotal;
+  });
+  
+  document.getElementById('totalAmount').textContent = '₱' + formatPrice(total);
+}
+
+function removeBottleRow(rowId) {
+  document.getElementById(rowId).remove();
+  updateTotal();
+}
+
+// Fetch and auto-populate customer deposit history
+function fetchAndPopulateCustomerData(customerName) {
+  if (!customerName || !customerName.trim()) return;
+  
+  console.log('Fetching data for customer:', customerName);
+  
+  fetch('api/deposit.php?customer=' + encodeURIComponent(customerName))
+    .then(r => {
+      if (!r.ok) throw new Error('API request failed with status ' + r.status);
+      return r.json();
+    })
+    .then(data => {
+      console.log('Customer data received:', data);
+      // For multi-bottle form, we don't auto-populate bottles
+      // User must manually add bottles for flexibility
+    })
+    .catch(err => {
+      console.error('Error fetching customer data:', err);
+      // Silently fail - user can still proceed with manual entry
+    });
+}
+
+// Auto-populate customer information when selected
+window.addEventListener('DOMContentLoaded', function() {
+  const customerSelect = document.getElementById('customer_name');
+  if (customerSelect) {
+    customerSelect.addEventListener('change', function() {
+      const customerName = this.value.trim();
+      if (customerName) {
+        fetchAndPopulateCustomerData(customerName);
+      }
+    });
+    
+    customerSelect.addEventListener('blur', function() {
+      const customerName = this.value.trim();
+      if (customerName) {
+        fetchAndPopulateCustomerData(customerName);
+      }
+    });
+  }
+  
+  // Handle manual amount override
+  const manualAmountInput = document.getElementById('manualAmount');
+  if (manualAmountInput) {
+    manualAmountInput.addEventListener('change', function() {
+      if (this.value) {
+        document.getElementById('totalAmount').textContent = '₱' + formatPrice(parseFloat(this.value));
+      }
+    });
+  }
+  
+  // Deposit form submission
+  const depositForm = document.getElementById('depositForm');
+  if (depositForm) {
+    depositForm.addEventListener('submit', function(e) {
+      e.preventDefault();
+      const bottleList = document.getElementById('bottleList');
+      const bottles = [];
+      
+      bottleList.querySelectorAll('.bottle-row').forEach(row => {
+        const qty = parseInt(row.querySelector('.quantity-input').value);
+        if (row.dataset.bottleType && qty > 0) {
+          bottles.push({
+            bottle_type: row.dataset.bottleType,
+            bottle_size: row.dataset.bottleSize,
+            quantity: qty,
+            price_per_bottle: parseFloat(row.dataset.pricePerBottle)
+          });
+        }
+      });
+      
+      if (bottles.length === 0) {
+        alert('Please add at least one bottle type with quantity.');
+        return;
+      }
+      
+      const manualAmount = parseFloat(document.getElementById('manualAmount').value);
+      if (manualAmount && manualAmount > 0) {
+        document.getElementById('bottles_json').value = JSON.stringify({bottles: bottles, manual_amount: manualAmount});
+      } else {
+        document.getElementById('bottles_json').value = JSON.stringify(bottles);
+      }
+      this.submit();
+    });
+  }
+}); // Close DOMContentLoaded event listener
+
 </script>
 </body>
 </html>
