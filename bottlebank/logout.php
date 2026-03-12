@@ -10,6 +10,7 @@ session_destroy();
   <meta charset="UTF-8">
   <meta http-equiv="refresh" content="2;url=login.php">
   <title>Logging Out...</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%2275%22 font-size=%2275%22 font-weight=%22bold%22 fill=%22%2326a69a%22%3EBB%3C/text%3E%3C/svg%3E" type="image/svg+xml">
   <style>
     body {
       font-family: 'Poppins', sans-serif;

@@ -98,44 +98,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_user'])) {
     $msg = "User updated successfully!";
 }
 
-    // Handle password reset by admin
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reset_password'])) {
-        $target_id = intval($_POST['reset_user_id']);
-        // fetch username
-        $s = $conn->prepare("SELECT username FROM user WHERE user_id = ?");
-        $s->bind_param('i', $target_id);
-        $s->execute();
-        $res = $s->get_result()->fetch_assoc();
-        $s->close();
-        if (!$res) {
-            $msg = 'User not found.';
-        } else {
-            // generate temporary password
-            $temp = bin2hex(random_bytes(4)); // 8 hex chars
-            $hash = password_hash($temp, PASSWORD_DEFAULT);
-            $u = $conn->prepare("UPDATE user SET password = ?, force_change = 1 WHERE user_id = ?");
-            $u->bind_param('si', $hash, $target_id);
-            if ($u->execute()) {
-                // log the reset to stock_log for compatibility
-                $admin_id = intval($_SESSION['user_id']);
-                $action = 'Password Reset';
-                $target_username = $res['username'];
-                $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name) VALUES (?, ?, ?)");
-                $log->bind_param('iss', $admin_id, $action, $target_username);
-                $log->execute(); $log->close();
-                
-                // log the reset to password_log table
-                $pw_log = $conn->prepare("INSERT INTO password_log (user_id, changed_by_id, change_type) VALUES (?, ?, 'Admin Reset')");
-                $pw_log->bind_param('ii', $target_id, $admin_id);
-                $pw_log->execute(); $pw_log->close();
-
-                $msg = "Temporary password for {$target_username}: <strong>" . htmlspecialchars($temp) . "</strong>. User will be forced to change on next login.";
-            } else {
-                $msg = 'Failed to reset password: ' . $u->error;
-            }
-            $u->close();
-        }
-    }
 
 // =====================
 // Fetch all users with pagination (5 per page)
@@ -621,10 +583,6 @@ function toggleSidebar(){
 <div class="action-buttons">
 <a href="#edit<?= $row['user_id'] ?>" class="button">Edit</a>
 <a href="#history<?= $row['user_id'] ?>" class="button secondary">History</a>
-<form method="post" style="display:inline;">
-    <input type="hidden" name="reset_user_id" value="<?= $row['user_id'] ?>">
-    <button type="submit" name="reset_password" class="button danger">Reset Pass</button>
-</form>
 </div>
 </td>
 </tr>

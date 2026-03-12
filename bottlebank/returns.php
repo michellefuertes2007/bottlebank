@@ -52,39 +52,24 @@ if ($cR) {
 if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
   $customer_name = trim($_POST['customer_name'] ?? '');
   $amount = floatval($_POST['amount'] ?? 0);
+  $bottle_type = trim($_POST['bottle_type'] ?? '');
+  $quantity = intval($_POST['quantity'] ?? 0);
+  $bottle_size = trim($_POST['bottle_size'] ?? 'small');
+  $with_case = isset($_POST['with_case']) ? 1 : 0;
+  $case_quantity = isset($_POST['case_quantity']) ? intval($_POST['case_quantity']) : 0;
+  
+  $has_bottles = ($bottle_type && $quantity > 0);
+  $has_amount = ($amount > 0);
 
-  if ($amount > 0) {
-    // process refund; bottle/quantity fields ignored
-    if (empty($customer_name)) {
-      $error = 'Customer name is required for refund.';
-    } else {
-      $stmt = $conn->prepare("INSERT INTO refund (user_id, customer_name, amount, refund_date) VALUES (?, ?, ?, NOW())");
-      $stmt->bind_param('isd', $user_id, $customer_name, $amount);
-      if ($stmt->execute()) {
-        $details = "Refund — ₱" . number_format($amount, 2, '.', ',');
-        $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, amount, details) VALUES (?, 'Refund', ?, ?, ?)");
-        $log->bind_param('isds', $user_id, $customer_name, $amount, $details);
-        $log->execute(); $log->close();
-        $msg = 'Refund recorded!';
-        header("refresh:1;url=index.php");
-      } else {
-        $error = 'Database error: ' . $stmt->error;
-      }
-      $stmt->close();
-    }
+  if (empty($customer_name)) {
+    $error = 'Customer name is required.';
+  } elseif (!$has_bottles && !$has_amount) {
+    $error = 'Please enter either bottle details or an amount.';
   } else {
-    // process return
-    $bottle_type = trim($_POST['bottle_type'] ?? '');
-    $quantity = intval($_POST['quantity'] ?? 0);
-    $bottle_size = trim($_POST['bottle_size'] ?? 'small');
-
-    if ($quantity <= 0) {
-      $error = 'Please enter a valid quantity greater than zero.';
-    } elseif (!$bottle_type) {
-      $error = 'Please select a bottle type.';
-    } else {
-      $with_case = isset($_POST['with_case']) ? 1 : 0;
-      $case_quantity = isset($_POST['case_quantity']) ? intval($_POST['case_quantity']) : 0;
+    $success = true;
+    
+    // Process RETURN if bottles provided
+    if ($has_bottles) {
       if ($with_case && $case_quantity <= 0) {
         $case_quantity = 1;
       }
@@ -94,8 +79,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
         $sizeLabel = $bottle_size === '1l' ? '1L' : '8/12oz';
         $details = "Return — " . $quantity . " bottles (" . $bottle_type . ", " . $sizeLabel . ")";
         $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, details, with_case, case_quantity) VALUES (?, 'Return', ?, ?, ?, ?, ?, ?)");
-        $log->bind_param('isssiii', $user_id, $customer_name, $bottle_type, $quantity, $details, $with_case, $case_quantity);
-        $log->execute(); $log->close();
+        $log->bind_param('issisii', $user_id, $customer_name, $bottle_type, $quantity, $details, $with_case, $case_quantity);
+        $log->execute();
+        $log->close();
+        
         // automatically remove one matching deposit log entry for this customer/bottle/quantity
         if($customer_name && $bottle_type && $quantity > 0) {
           $del = $conn->prepare("DELETE FROM stock_log WHERE action_type='Deposit' AND customer_name=? AND bottle_type=? AND quantity=? LIMIT 1");
@@ -105,12 +92,33 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
             $del->close();
           }
         }
-        $msg = 'Return recorded!';
-        header("refresh:1;url=index.php");
       } else {
         $error = 'Database error: ' . $stmt->error;
+        $success = false;
       }
       $stmt->close();
+    }
+    
+    // Process REFUND if amount provided
+    if ($has_amount && $success) {
+      $stmt = $conn->prepare("INSERT INTO refund (user_id, customer_name, amount, refund_date) VALUES (?, ?, ?, NOW())");
+      $stmt->bind_param('isd', $user_id, $customer_name, $amount);
+      if ($stmt->execute()) {
+        $details = "Refund — ₱" . number_format($amount, 2, '.', ',');
+        $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, amount, details) VALUES (?, 'Refund', ?, ?, ?)");
+        $log->bind_param('isds', $user_id, $customer_name, $amount, $details);
+        $log->execute();
+        $log->close();
+      } else {
+        $error = 'Database error: ' . $stmt->error;
+        $success = false;
+      }
+      $stmt->close();
+    }
+    
+    if ($success) {
+      $msg = 'Transaction recorded!';
+      header("refresh:1;url=index.php");
     }
   }
 }
@@ -165,6 +173,7 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] == "POST" && isset($_POST['edit_id']
   <meta charset="utf-8">
   <title>Returns • BottleBank</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%2275%22 font-size=%2275%22 font-weight=%22bold%22 fill=%22%2326a69a%22%3EBB%3C/text%3E%3C/svg%3E" type="image/svg+xml">
   <link rel="stylesheet" href="asset/style.css">
   <style>
     .topbar .logo { width:40px; height:40px; background:#26a69a; color:white; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:700; margin-right:10px; }
@@ -180,8 +189,8 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] == "POST" && isset($_POST['edit_id']
     button.primary:hover { background:#2e7d7d; }
     button.ghost { background:#80cbc4; color:#004d40; border:1px solid #80cbc4; }
     button.ghost:hover { background:#4db6ac; }
-    .notice { padding:12px 15px; background:#e9fbf1; border-left:4px solid #26a69a; border-radius:6px; margin-bottom:15px; color:#155724; font-weight:500; }
-    .error { padding:12px 15px; background:#ffecec; border-left:4px solid #ef5350; border-radius:6px; margin-bottom:15px; color:#c62828; font-weight:500; }
+    .notice { position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:20px 30px; background:#e9fbf1; border-left:4px solid #26a69a; border-radius:6px; color:#155724; font-weight:500; z-index:9999; box-shadow:0 4px 12px rgba(0,0,0,0.15); min-width:300px; text-align:center; margin-top:0 !important; }
+    .error { position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:20px 30px; background:#ffecec; border-left:4px solid #ef5350; border-radius:6px; color:#c62828; font-weight:500; z-index:9999; box-shadow:0 4px 12px rgba(0,0,0,0.15); min-width:300px; text-align:center; margin-top:0 !important; }
     .toggle-sidebar { background:none; border:none; font-size:18px; cursor:pointer; color:#2d6a6a; font-weight:600; display:none; transition:0.3s; }
     @media (max-width:768px) { .toggle-sidebar { display:block; } }
     /* Shared field box style used for With Case and Number of Cases */
@@ -234,11 +243,12 @@ function toggleSidebar(){
   <div class="menu-wrap"><a href="index.php" class="kv">← Back to Dashboard</a></div>
   </div>
   
+  <?php if($msg): ?><div class="notice"><?=htmlspecialchars($msg)?></div><?php endif; ?>
+  <?php if($error): ?><div class="error"><?=htmlspecialchars($error)?></div><?php endif; ?>
+
   <div class="grid">
     <div class="panel" style="grid-column: span 12;">
       <h3>New Return</h3>
-      <?php if($msg): ?><div class="notice"><?=htmlspecialchars($msg)?></div><?php endif; ?>
-      <?php if($error): ?><div class="error"><?=htmlspecialchars($error)?></div><?php endif; ?>
 
       <?php if($is_admin && isset($editRow)): ?>
         <h3>Edit Return #<?= $editRow['return_id'] ?></h3>
@@ -318,7 +328,7 @@ function toggleSidebar(){
           </div>
           <div class="form-row">
             <div class="col">
-              <label>Amount (₱)</label>
+              <label>Amount to be Refunded</label>
               <input type="number" step="0.01" min="0" name="amount" id="refund_amount" placeholder="₱ 0.00" value="0">
             </div>
           </div>
