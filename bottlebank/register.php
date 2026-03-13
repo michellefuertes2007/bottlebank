@@ -66,6 +66,14 @@ body {
   font-family: 'Poppins', 'Segoe UI', sans-serif;
   background: linear-gradient(135deg, #0077cc 0%, #00c16e 100%);
   padding: 20px;
+  font-family: 'Poppins', sans-serif;
+  background: #f0f5f4;
+  color: #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  flex-direction: column;
 }
 
 .container {
@@ -82,6 +90,11 @@ body {
   width: 100%;
   border-radius: 14px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+  background: white;
+  padding: 25px 40px;
+  border-radius: 10px;
+  box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+  text-align: center;
 }
 
 .box h2 {
@@ -240,6 +253,12 @@ button:active {
   .link {
     font-size: 12px;
   }
+
+  @media (max-width: 600px) {
+    .box {
+      padding: 15px 10px;
+      font-size: 14px;
+    }
 }
 </style>
 </head>

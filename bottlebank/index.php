@@ -47,6 +47,8 @@ body {
     background: #f0f7f7;
     color: #333;
     display: flex;
+    flex-direction: column;
+    min-height: 100vh;
 }
 
 /* Sidebar */

@@ -11,7 +11,7 @@ $error = '';
 function tableExists($conn, $table) {
     $res = $conn->query("SHOW TABLES LIKE '$table'");
     return ($res && $res->num_rows > 0);
-}
+} 
 
 // helper to add column if missing (avoids syntax issues on older MySQL)
 // now also skips if table itself doesn't exist
@@ -48,28 +48,28 @@ $cR = $conn->query("SELECT DISTINCT customer_name FROM deposit WHERE customer_na
 if ($cR) { while ($r = $cR->fetch_assoc()) $deposit_customers[] = $r['customer_name']; }
 
 // Handle editing bottle type
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_bottle_type'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_bottle_type']) && $is_admin) {
   $type_id = intval($_POST['type_id'] ?? 0);
   $edit_name = trim($_POST['edit_bottle_name'] ?? '');
-  
+  $edit_size = trim($_POST['edit_bottle_size'] ?? '');
+  $edit_price = floatval($_POST['edit_bottle_price'] ?? 0);
   if (!$type_id) {
     $error = 'Invalid bottle type.';
-  } elseif (!$edit_name) {
-    $error = 'Please enter a bottle type name.';
-  } elseif (strlen($edit_name) < 3) {
-    $error = 'Bottle type name must be at least 3 characters long.';
-  } elseif (strlen($edit_name) > 100) {
-    $error = 'Bottle type name cannot exceed 100 characters.';
+  } elseif (!$edit_name || strlen($edit_name) < 3 || strlen($edit_name) > 100) {
+    $error = 'Bottle type name must be 3-100 characters.';
+  } elseif (!$edit_size || strlen($edit_size) < 2 || strlen($edit_size) > 20) {
+    $error = 'Bottle size must be 2-20 characters.';
+  } elseif ($edit_price < 0) {
+    $error = 'Price must be positive.';
   } else {
-    $stmt = $conn->prepare("UPDATE bottle_types SET type_name = ? WHERE type_id = ?");
-    $stmt->bind_param("si", $edit_name, $type_id);
-    
+    $stmt = $conn->prepare("UPDATE bottle_types SET type_name = ?, bottle_size = ?, price_per_bottle = ? WHERE type_id = ?");
+    $stmt->bind_param("ssdi", $edit_name, $edit_size, $edit_price, $type_id);
     try {
       if ($stmt->execute()) {
-        $msg = "✓ Bottle type '" . htmlspecialchars($edit_name) . "' updated successfully!";
+        $msg = "✓ Bottle type updated successfully!";
         // Refresh the bottle types list
         $bottle_types_list = [];
-        $btResult = $conn->query("SELECT type_id, type_name FROM bottle_types ORDER BY type_name ASC");
+        $btResult = $conn->query("SELECT type_id, type_name, bottle_size, price_per_bottle FROM bottle_types ORDER BY type_name ASC");
         if ($btResult) {
           while ($row = $btResult->fetch_assoc()) {
             $bottle_types_list[] = $row;
@@ -487,8 +487,10 @@ document.addEventListener('DOMContentLoaded', function() {
             <?php foreach ($bottle_types_list as $type): ?>
               <div style="background:#26a69a;color:white;padding:5px 10px;border-radius:4px;font-size:12px;font-weight:500;display:flex;gap:6px;align-items:center;">
                 <span><?= htmlspecialchars($type['type_name']) ?> <?= htmlspecialchars($type['bottle_size']) ?> ₱<?= number_format($type['price_per_bottle'], 2) ?></span>
-                <button type="button" class="edit-btn" onclick="editBottleType(<?= $type['type_id'] ?>, '<?= htmlspecialchars(addslashes($type['type_name'])) ?>')" style="background:none;border:none;color:white;cursor:pointer;padding:0;font-size:12px;opacity:0.8;" title="Edit">✎</button>
-                <button type="button" class="delete-btn" onclick="deleteBottleType(<?= $type['type_id'] ?>, '<?= htmlspecialchars(addslashes($type['type_name'])) ?>')" style="background:none;border:none;color:white;cursor:pointer;padding:0;font-size:12px;opacity:0.8;" title="Delete">✕</button>
+                <?php if ($is_admin): ?>
+                  <button type="button" class="edit-btn" onclick="editBottleType(<?= $type['type_id'] ?>, '<?= htmlspecialchars(addslashes($type['type_name'])) ?>', '<?= htmlspecialchars(addslashes($type['bottle_size'])) ?>', <?= (float)$type['price_per_bottle'] ?>)" style="background:none;border:none;color:white;cursor:pointer;padding:0;font-size:12px;opacity:0.8;" title="Edit">✎</button>
+                  <button type="button" class="delete-btn" onclick="deleteBottleType(<?= $type['type_id'] ?>, '<?= htmlspecialchars(addslashes($type['type_name'])) ?>')" style="background:none;border:none;color:white;cursor:pointer;padding:0;font-size:12px;opacity:0.8;" title="Delete">✕</button>
+                <?php endif; ?>
               </div>
             <?php endforeach; ?>
           </div>
@@ -525,19 +527,51 @@ document.addEventListener('DOMContentLoaded', function() {
       <script>
       // Required functions for bottle type management
       function editBottleType(typeId, typeName) {
-        const newName = prompt('Edit bottle type name:', typeName);
-        if (newName !== null && newName.trim()) {
+        // Admin modal for editing all fields
+        let modal = document.getElementById('editBottleModal');
+        if (!modal) {
+          modal = document.createElement('div');
+          modal.id = 'editBottleModal';
+          modal.style = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;z-index:9999;';
+          modal.innerHTML = `
+            <div style="background:white;padding:30px;border-radius:8px;box-shadow:0 2px 16px #0002;min-width:320px;max-width:90vw;">
+              <h3 style="margin-top:0;color:#2d6a6a;">Edit Bottle Type</h3>
+              <form id="editBottleForm" method="POST" style="display:flex;flex-direction:column;gap:12px;">
+                <input type="hidden" name="type_id" value="${typeId}">
+                <input type="hidden" name="edit_bottle_type" value="1">
+                <label>Name <input type="text" name="edit_bottle_name" value="${typeName}" required minlength="2" maxlength="100" style="padding:8px;border-radius:4px;border:1px solid #26a69a;"></label>
+                <label>Size <input type="text" name="edit_bottle_size" value="" required minlength="2" maxlength="20" style="padding:8px;border-radius:4px;border:1px solid #26a69a;"></label>
+                <label>Price <input type="number" name="edit_bottle_price" value="" step="0.01" min="0" required style="padding:8px;border-radius:4px;border:1px solid #26a69a;"></label>
+                <div style="display:flex;gap:10px;margin-top:10px;">
+                  <button type="submit" class="primary" style="background:#26a69a;color:white;padding:8px 16px;border:none;border-radius:6px;font-weight:600;cursor:pointer;">Save</button>
+                  <button type="button" onclick="document.body.removeChild(document.getElementById('editBottleModal'))" class="ghost" style="background:#eee;color:#333;padding:8px 16px;border:none;border-radius:6px;font-weight:600;cursor:pointer;">Cancel</button>
+                </div>
+              </form>
+            </div>
+          `;
+          document.body.appendChild(modal);
+        }
+        // Set values
+        modal.querySelector('input[name="edit_bottle_name"]').value = typeName;
+        modal.querySelector('input[name="edit_bottle_size"]').value = arguments[2] || '';
+        modal.querySelector('input[name="edit_bottle_price"]').value = arguments[3] || '';
+        modal.querySelector('#editBottleForm').onsubmit = function(e) {
+          e.preventDefault();
           const form = document.createElement('form');
           form.method = 'POST';
           form.innerHTML = `
             <input type="hidden" name="type_id" value="${typeId}">
-            <input type="hidden" name="edit_bottle_name" value="${newName.trim()}">
             <input type="hidden" name="edit_bottle_type" value="1">
+            <input type="hidden" name="edit_bottle_name" value="${modal.querySelector('input[name="edit_bottle_name"]').value.trim()}">
+            <input type="hidden" name="edit_bottle_size" value="${modal.querySelector('input[name="edit_bottle_size"]').value.trim()}">
+            <input type="hidden" name="edit_bottle_price" value="${modal.querySelector('input[name="edit_bottle_price"]').value.trim()}">
           `;
           document.body.appendChild(form);
           form.submit();
           document.body.removeChild(form);
-        }
+          document.body.removeChild(modal);
+        };
+        modal.style.display = 'flex';
       }
 
       function deleteBottleType(typeId, typeName) {

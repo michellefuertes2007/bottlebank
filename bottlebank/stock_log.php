@@ -213,6 +213,15 @@ $stmt->close();
     tr:hover { background:#f5f5f5; }
     .toggle-sidebar { background:none; border:none; font-size:18px; cursor:pointer; color:#2d6a6a; font-weight:600; display:none; transition:0.3s; }
     @media (max-width:768px) { .toggle-sidebar { display:block; } }
+    .panel, .app, .grid, .notice, .error, .primary, .ghost, .responsive-input, .responsive-btn {
+      box-sizing: border-box;
+    }
+    @media (max-width: 768px) {
+      .panel, .app, .grid { width: 100vw !important; min-width: 0; }
+      .notice, .error { min-width: 90vw; font-size: 14px; }
+      .primary, .ghost, .responsive-btn { width: 100%; font-size: 15px; }
+      .responsive-input { font-size: 14px; padding: 8px; }
+    }
   </style>
 </head>
 <body>

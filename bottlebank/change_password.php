@@ -92,12 +92,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   }
 
   body {
-    font-family: 'Poppins', 'Segoe UI', sans-serif;
-    background: linear-gradient(135deg, #2d6a6a 0%, #26a69a 100%);
+    font-family: 'Poppins', sans-serif;
+    background: #f0f5f4;
+    color: #333;
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 100vh;
+    height: 100vh;
+    flex-direction: column;
     padding: 20px;
   }
 
@@ -298,6 +300,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       font-size: 11px;
       margin-top: 15px;
     }
+  }
+
+  .box { background: white; padding: 25px 40px; border-radius: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); text-align: center; }
+  @media (max-width: 600px) {
+    .box { padding: 15px 10px; font-size: 14px; }
   }
 </style>
 </head>

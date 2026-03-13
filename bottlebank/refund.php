@@ -189,6 +189,16 @@ $refund_stmt->close();
     .error { position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:20px 30px; background:#ffecec; border-left:4px solid #ef5350; border-radius:6px; color:#c62828; font-weight:500; z-index:9999; box-shadow:0 4px 12px rgba(0,0,0,0.15); min-width:300px; text-align:center; margin-top:0 !important; }
     .toggle-sidebar { background:none; border:none; font-size:18px; cursor:pointer; color:#2d6a6a; font-weight:600; display:none; transition:0.3s; }
     @media (max-width:768px) { .toggle-sidebar { display:block; } }
+    .form-row, .panel, .app, .grid, .notice, .error, .primary, .ghost, .responsive-input, .responsive-btn {
+      box-sizing: border-box;
+    }
+    @media (max-width: 768px) {
+      .form-row { flex-direction: column; gap: 8px; }
+      .panel, .app, .grid { width: 100vw !important; min-width: 0; }
+      .notice, .error { min-width: 90vw; font-size: 14px; }
+      .primary, .ghost, .responsive-btn { width: 100%; font-size: 15px; }
+      .responsive-input { font-size: 14px; padding: 8px; }
+    }
   </style>
 </head>
 <body>

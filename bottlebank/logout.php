@@ -29,6 +29,12 @@ session_destroy();
       box-shadow: 0 5px 15px rgba(0,0,0,0.1);
       text-align: center;
     }
+    @media (max-width: 600px) {
+      .box {
+        padding: 15px 10px;
+        font-size: 14px;
+      }
+    }
   </style>
 </head>
 <body>
