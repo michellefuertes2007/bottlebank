@@ -367,9 +367,7 @@ button:active {
         </div>
         <button type="submit">Login</button>
       </form>
-      <div class="link">
-        Don't have an account? <a href="register.php">Sign up here</a>
-      </div>
+      
     <?php endif; ?>
   </div>
 </div>

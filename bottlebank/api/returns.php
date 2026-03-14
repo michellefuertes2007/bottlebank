@@ -7,108 +7,116 @@ header('Access-Control-Allow-Headers: Content-Type');
 require_once '../includes/db_connect.php';
 
 // GET: fetch available bottles for return by customer name
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['customer'])) {
     $cust = trim($_GET['customer']);
     $availableBottles = [];
     $totalDepositAmount = 0;
     $totalRefundedAmount = 0;
-    
-    // Get all deposits for this customer from stock_log
-    $deposits_query = $conn->prepare("
-        SELECT bottle_type, quantity, details, amount FROM stock_log 
-        WHERE action_type='Deposit' AND customer_name = ? 
-        ORDER BY date_logged DESC
-    ");
-    
+
+    // Find customer_id by canonical name
+    $customer_id = null;
+    $find_cust = $conn->prepare("SELECT customer_id FROM customer WHERE canonical_name = ?");
+    if ($find_cust) {
+        $find_cust->bind_param('s', $cust);
+        $find_cust->execute();
+        $find_cust->bind_result($cid);
+        if ($find_cust->fetch()) {
+            $customer_id = $cid;
+        }
+        $find_cust->close();
+    }
+    if (!$customer_id) {
+        echo json_encode(['available_bottles' => [], 'error' => 'Customer not found']);
+        $conn->close();
+        exit;
+    }
+
+    // Get all deposits for this customer by type_id
+    $deposits_query = $conn->prepare("SELECT type_id, quantity, amount FROM deposit WHERE customer_id = ?");
+    $deposited = [];
     if ($deposits_query) {
-        $deposits_query->bind_param('s', $cust);
+        $deposits_query->bind_param('i', $customer_id);
         $deposits_query->execute();
-        $deposits_result = $deposits_query->get_result();
-        
-        // Parse deposits to get bottle details and amount
-        $deposited = [];
-        while ($row = $deposits_result->fetch_assoc()) {
-            // Extract bottle info from details field
-            // Format: "Deposit — 20x coke 8oz (₱15.00) + 10x red horse 500ml (₱55.00) | Total: ₱850.00"
-            if (preg_match_all('/(\d+)x\s+(\w+(?:\s+\w+)?)\s+([^(]+)\s*\(₱([\d,]+\.\d{2})\)/', $row['details'], $matches)) {
-                for ($i = 0; $i < count($matches[0]); $i++) {
-                    $bottle_type = trim($matches[2][$i]);
-                    $bottle_size = trim($matches[3][$i]);
-                    $qty = intval($matches[1][$i]);
-                    $price = floatval(str_replace(',', '', $matches[4][$i]));
-                    
-                    if (!isset($deposited[$bottle_type])) {
-                        $deposited[$bottle_type] = ['size' => $bottle_size, 'qty' => 0, 'total_value' => 0];
-                    }
-                    $deposited[$bottle_type]['qty'] += $qty;
-                    $deposited[$bottle_type]['total_value'] += ($qty * $price);
-                }
+        $deposits_query->bind_result($type_id, $qty, $amt);
+        while ($deposits_query->fetch()) {
+            if (!isset($deposited[$type_id])) {
+                $deposited[$type_id] = ['qty' => 0, 'total_value' => 0];
             }
-            // Add the deposit amount
-            if (isset($row['amount']) && $row['amount']) {
-                $totalDepositAmount += floatval($row['amount']);
-            }
+            $deposited[$type_id]['qty'] += $qty;
+            $deposited[$type_id]['total_value'] += $amt;
+            $totalDepositAmount += $amt;
         }
         $deposits_query->close();
-        
-        // Get all refunds for this customer
-        $refunds_query = $conn->prepare("
-            SELECT SUM(amount) as total_refunded FROM stock_log 
-            WHERE action_type='Refund' AND customer_name = ?
-        ");
-        
-        if ($refunds_query) {
-            $refunds_query->bind_param('s', $cust);
-            $refunds_query->execute();
-            $refunds_result = $refunds_query->get_result();
-            if ($refund_row = $refunds_result->fetch_assoc()) {
-                $totalRefundedAmount = floatval($refund_row['total_refunded'] ?? 0);
-            }
-            $refunds_query->close();
+    }
+
+    // Get all returns for this customer by type_id (returns table stores customer_name)
+    $returns_query = $conn->prepare("SELECT type_id, SUM(quantity) as total_returned FROM returns WHERE customer_name = ? GROUP BY type_id");
+    $returned = [];
+    if ($returns_query) {
+        $returns_query->bind_param('s', $cust);
+        $returns_query->execute();
+        $returns_query->bind_result($type_id, $total_returned);
+        while ($returns_query->fetch()) {
+            $returned[$type_id] = intval($total_returned);
         }
-        
-        // Get all returns for this customer
-        $returns_query = $conn->prepare("
-            SELECT bottle_type, SUM(quantity) as total_returned FROM stock_log 
-            WHERE action_type='Return' AND customer_name = ? AND bottle_type IS NOT NULL
-            GROUP BY bottle_type
-        ");
-        
-        if ($returns_query) {
-            $returns_query->bind_param('s', $cust);
-            $returns_query->execute();
-            $returns_result = $returns_query->get_result();
-            
-            $returned = [];
-            while ($row = $returns_result->fetch_assoc()) {
-                $returned[$row['bottle_type']] = intval($row['total_returned']);
+        $returns_query->close();
+    }
+
+    // Get bottle type info for display
+    foreach ($deposited as $type_id => $info) {
+        $qty_deposited = $info['qty'];
+        $qty_returned = $returned[$type_id] ?? 0;
+        $available_qty = $qty_deposited - $qty_returned;
+        if ($available_qty > 0) {
+            // Get bottle type details
+            $type_stmt = $conn->prepare("SELECT type_name, bottle_size FROM bottle_types WHERE type_id = ?");
+            $type_stmt->bind_param('i', $type_id);
+            $type_stmt->execute();
+            $type_stmt->bind_result($type_name, $bottle_size);
+            if ($type_stmt->fetch()) {
+                $availableBottles[] = [
+                    'type_id' => $type_id,
+                    'bottle_type' => $type_name,
+                    'bottle_size' => $bottle_size,
+                    'available_qty' => $available_qty,
+                    'deposited_qty' => $qty_deposited,
+                    'returned_qty' => $qty_returned
+                ];
             }
-            $returns_query->close();
-            
-            // Calculate available bottles (deposits - returns) and refund amount
-            foreach ($deposited as $bottle_type => $info) {
-                $available_qty = $info['qty'] - ($returned[$bottle_type] ?? 0);
-                if ($available_qty > 0) {
-                    $availableBottles[] = [
-                        'bottle_type' => $bottle_type,
-                        'bottle_size' => $info['size'],
-                        'available_qty' => $available_qty,
-                        'deposited_qty' => $info['qty'],
-                        'returned_qty' => $returned[$bottle_type] ?? 0
-                    ];
-                }
-            }
+            $type_stmt->close();
         }
     }
-    
-    // Calculate remaining refund amount
-    $remainingRefundAmount = $totalDepositAmount - $totalRefundedAmount;
-    
+
+    // Compute total returned value (based on bottle_types pricing) to determine how much refund remains.
+    $totalReturnedAmount = 0;
+    $returns_value_stmt = $conn->prepare(
+        "SELECT SUM(r.quantity * COALESCE(b.price_per_bottle, 0)) AS total_returned " .
+        "FROM returns r LEFT JOIN bottle_types b ON r.type_id = b.type_id " .
+        "WHERE r.customer_name = ?"
+    );
+    if ($returns_value_stmt) {
+        $returns_value_stmt->bind_param('s', $cust);
+        $returns_value_stmt->execute();
+        $returns_value_stmt->bind_result($totalReturnedAmount);
+        $returns_value_stmt->fetch();
+        $returns_value_stmt->close();
+
+        // Ensure value is numeric to avoid PHP 8.1+ deprecation warnings when no rows exist.
+        if ($totalReturnedAmount === null) {
+            $totalReturnedAmount = 0;
+        }
+    }
+
+    $totalDepositAmount = round($totalDepositAmount, 2);
+    $totalReturnedAmount = round($totalReturnedAmount, 2);
+    $remainingRefund = max(0, $totalDepositAmount - $totalReturnedAmount);
+
     echo json_encode([
         'available_bottles' => $availableBottles,
-        'total_deposit_amount' => round($totalDepositAmount, 2),
-        'total_refunded_amount' => round($totalRefundedAmount, 2),
-        'remaining_refund_amount' => round(max(0, $remainingRefundAmount), 2)
+        'total_deposit_amount' => $totalDepositAmount,
+        'total_returned_amount' => $totalReturnedAmount,
+        'remaining_refund_amount' => $remainingRefund
     ]);
     $conn->close();
     exit;

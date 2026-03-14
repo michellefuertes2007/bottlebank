@@ -1,3 +1,9 @@
+    {
+      {const opt = select.options[select.selectedIndex];
+      // ...existing code for updateBottleInfo...
+  // ...existing code...
+  }
+}
 <?php
 session_start();
 require 'includes/db_connect.php';
@@ -6,7 +12,6 @@ $user_id = intval($_SESSION['user_id']);
 $is_admin = (isset($_SESSION['role']) && $_SESSION['role'] === 'admin');
 $msg = '';
 $error = '';
-
 // helper to determine if a table exists in the current database
 function tableExists($conn, $table) {
     $res = $conn->query("SHOW TABLES LIKE '$table'");
@@ -33,19 +38,23 @@ ensureColumn($conn, 'returns', 'bottle_size', "bottle_size VARCHAR(10) DEFAULT '
 // stock_log also started recording size; add column if missing
 ensureColumn($conn, 'stock_log', 'bottle_size', "bottle_size VARCHAR(10) DEFAULT 'small'");
 
+// Add customer_id to tables that reference canonical customer records (new column for linking)
+ensureColumn($conn, 'deposit', 'customer_id', 'customer_id INT(11) DEFAULT NULL');
+ensureColumn($conn, 'deposit', 'customer_name', "customer_name VARCHAR(100) DEFAULT NULL");
+ensureColumn($conn, 'stock_log', 'customer_id', 'customer_id INT(11) DEFAULT NULL');
+
 // Get all bottle types with prices from database
 $bottle_types_list = [];
 $btResult = $conn->query("SELECT type_id, type_name, bottle_size, price_per_bottle FROM bottle_types ORDER BY type_name ASC");
-if ($btResult) {
+if ($btResult) {}
   while ($row = $btResult->fetch_assoc()) {
     $bottle_types_list[] = $row;
   }
-}
 
-// prepare distinct customer list from deposits for datalist/autofill
+// prepare distinct customer list from canonical customer records for datalist/autofill
 $deposit_customers = [];
-$cR = $conn->query("SELECT DISTINCT customer_name FROM deposit WHERE customer_name IS NOT NULL AND customer_name != '' ORDER BY customer_name ASC");
-if ($cR) { while ($r = $cR->fetch_assoc()) $deposit_customers[] = $r['customer_name']; }
+$cR = $conn->query("SELECT canonical_name FROM customer ORDER BY canonical_name ASC");
+if ($cR) { while ($r = $cR->fetch_assoc()) $deposit_customers[] = $r['canonical_name']; }
 
 // Handle editing bottle type
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_bottle_type']) && $is_admin) {
@@ -62,28 +71,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_bottle_type']) &
   } elseif ($edit_price < 0) {
     $error = 'Price must be positive.';
   } else {
-    $stmt = $conn->prepare("UPDATE bottle_types SET type_name = ?, bottle_size = ?, price_per_bottle = ? WHERE type_id = ?");
-    $stmt->bind_param("ssdi", $edit_name, $edit_size, $edit_price, $type_id);
-    try {
-      if ($stmt->execute()) {
-        $msg = "✓ Bottle type updated successfully!";
-        // Refresh the bottle types list
-        $bottle_types_list = [];
-        $btResult = $conn->query("SELECT type_id, type_name, bottle_size, price_per_bottle FROM bottle_types ORDER BY type_name ASC");
-        if ($btResult) {
-          while ($row = $btResult->fetch_assoc()) {
-            $bottle_types_list[] = $row;
-          }
-        }
-      }
-    } catch (mysqli_sql_exception $e) {
-      if (strpos($e->getMessage(), 'Duplicate') !== false || strpos($e->getMessage(), 'UNIQUE') !== false) {
-        $error = "Bottle type '" . htmlspecialchars($edit_name) . "' already exists. Please use a different name.";
-      } else {
-        $error = "Error updating bottle type: " . htmlspecialchars($e->getMessage());
+    // Prevent exact duplicate (same name, size, price) on other records
+    $dupCheck = $conn->prepare("SELECT COUNT(*) as cnt FROM bottle_types WHERE type_name = ? AND bottle_size = ? AND price_per_bottle = ? AND type_id != ?");
+    if ($dupCheck) {
+      $dupCheck->bind_param('ssdi', $edit_name, $edit_size, $edit_price, $type_id);
+      $dupCheck->execute();
+      $dupRes = $dupCheck->get_result();
+      $dupRow = $dupRes ? $dupRes->fetch_assoc() : null;
+      $dupCheck->close();
+      if ($dupRow && intval($dupRow['cnt']) > 0) {
+        $error = "Bottle type '" . htmlspecialchars($edit_name) . "' with size '" . htmlspecialchars($edit_size) . "' and price '" . number_format($edit_price,2) . "' already exists. Please edit the existing entry instead.";
       }
     }
-    $stmt->close();
+
+    if (empty($error)) {
+      $stmt = $conn->prepare("UPDATE bottle_types SET type_name = ?, bottle_size = ?, price_per_bottle = ? WHERE type_id = ?");
+      $stmt->bind_param("ssdi", $edit_name, $edit_size, $edit_price, $type_id);
+      try {
+        if ($stmt->execute()) {
+          $msg = "✓ Bottle type updated successfully!";
+          // Refresh the bottle types list
+          $bottle_types_list = [];
+          $btResult = $conn->query("SELECT type_id, type_name, bottle_size, price_per_bottle FROM bottle_types ORDER BY type_name ASC");
+          if ($btResult) {
+            while ($row = $btResult->fetch_assoc()) {
+              $bottle_types_list[] = $row;
+            }
+          }
+        }
+      } catch (mysqli_sql_exception $e) {
+        if (strpos($e->getMessage(), 'Duplicate') !== false || strpos($e->getMessage(), 'UNIQUE') !== false) {
+          $error = "Bottle type '" . htmlspecialchars($edit_name) . "' already exists. Please use a different name.";
+        } else {
+          $error = "Error updating bottle type: " . htmlspecialchars($e->getMessage());
+        }
+      }
+      $stmt->close();
+  // ...existing code...
   }
 }
 
@@ -137,30 +161,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_bottle_type'])) {
   } elseif ($new_price < 0) {
     $error = 'Price cannot be negative.';
   } else {
-    $stmt = $conn->prepare("INSERT INTO bottle_types (type_name, bottle_size, price_per_bottle, created_by) VALUES (?, ?, ?, NULL)");
-    $stmt->bind_param("ssd", $new_type, $new_size, $new_price);
-    
-    try {
-      if ($stmt->execute()) {
-        // Refresh the bottle types list
-        $bottle_types_list = [];
-        $btResult = $conn->query("SELECT type_id, type_name, bottle_size, price_per_bottle FROM bottle_types ORDER BY type_name ASC");
-        if ($btResult) {
-          while ($row = $btResult->fetch_assoc()) {
-            $bottle_types_list[] = $row;
-          }
-        }
-        $msg = "✓ Bottle type '" . htmlspecialchars($new_type) . "' added successfully!";
-      }
-    } catch (mysqli_sql_exception $e) {
-      // Check if error is due to duplicate
-      if (strpos($e->getMessage(), 'Duplicate') !== false || strpos($e->getMessage(), 'UNIQUE') !== false) {
-        $error = "Bottle type '" . htmlspecialchars($new_type) . "' already exists. Please use a different name or select it from the dropdown.";
-      } else {
-        $error = "Error adding bottle type: " . htmlspecialchars($e->getMessage());
+    // Prevent inserting exact duplicate (same name, size, price)
+    $dupCheck = $conn->prepare("SELECT COUNT(*) as cnt FROM bottle_types WHERE type_name = ? AND bottle_size = ? AND price_per_bottle = ?");
+    if ($dupCheck) {
+      $dupCheck->bind_param('ssd', $new_type, $new_size, $new_price);
+      $dupCheck->execute();
+      $dupRes = $dupCheck->get_result();
+      $dupRow = $dupRes ? $dupRes->fetch_assoc() : null;
+      $dupCheck->close();
+      if ($dupRow && intval($dupRow['cnt']) > 0) {
+        $error = "Bottle type '" . htmlspecialchars($new_type) . "' with size '" . htmlspecialchars($new_size) . "' and price '" . number_format($new_price,2) . "' already exists. Please edit the existing entry instead.";
       }
     }
-    $stmt->close();
+
+    if (empty($error)) {
+      $stmt = $conn->prepare("INSERT INTO bottle_types (type_name, bottle_size, price_per_bottle, created_by) VALUES (?, ?, ?, NULL)");
+      $stmt->bind_param("ssd", $new_type, $new_size, $new_price);
+
+      try {
+        if ($stmt->execute()) {
+          // Refresh the bottle types list
+          $bottle_types_list = [];
+          $btResult = $conn->query("SELECT type_id, type_name, bottle_size, price_per_bottle FROM bottle_types ORDER BY type_name ASC");
+          if ($btResult) {
+            while ($row = $btResult->fetch_assoc()) {
+              $bottle_types_list[] = $row;
+            }
+          }
+          $msg = "✓ Bottle type '" . htmlspecialchars($new_type) . "' added successfully!";
+        }
+      } catch (mysqli_sql_exception $e) {
+        // If unique constraint violated for (type_name, bottle_size), inform user to edit existing type
+        if (strpos($e->getMessage(), 'Duplicate') !== false || strpos($e->getMessage(), 'UNIQUE') !== false) {
+          $error = "Bottle type '" . htmlspecialchars($new_type) . "' with size '" . htmlspecialchars($new_size) . "' already exists. Please edit it instead.";
+        } else {
+          $error = "Error adding bottle type: " . htmlspecialchars($e->getMessage());
+        }
+      }
+
+      $stmt->close();
+    }
   }
 }
 
@@ -168,90 +208,183 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_bottle_type'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['edit_id']) && !isset($_POST['add_bottle_type']) && isset($_POST['bottles_json'])) {
   $customer_name = trim($_POST['customer_name'] ?? '');
   $bottles_json = $_POST['bottles_json'];
-  
+
   if (empty($customer_name)) {
     $error = 'Customer name is required.';
   } else {
-    $decoded = json_decode($bottles_json, true);
-    $manual_amount = null;
-    $bottles = [];
-    
-    // Handle both array format and object format with manual_amount
-    if (isset($decoded['bottles']) && isset($decoded['manual_amount'])) {
-      $bottles = $decoded['bottles'];
-      $manual_amount = floatval($decoded['manual_amount']);
-    } elseif (is_array($decoded) && !isset($decoded['bottles'])) {
-      $bottles = $decoded;
-    } else {
-      $bottles = $decoded;
-    }
-    
-    if (!$bottles || !is_array($bottles) || count($bottles) === 0) {
-      $error = 'Please add at least one bottle type to the deposit.';
-    } else {
-      $total_amount = 0;
-      $all_valid = true;
-      $deposit_summary = [];
-      
-      // Validate all bottles and calculate total
-      foreach ($bottles as $bottle) {
-        $bottle_type = trim($bottle['bottle_type'] ?? '');
-        $quantity = intval($bottle['quantity'] ?? 0);
-        $price_per_bottle = floatval($bottle['price_per_bottle'] ?? 0);
-        $bottle_size = $bottle['bottle_size'] ?? 'small';
-        
-        if (empty($bottle_type) || $quantity <= 0) {
-          $all_valid = false;
-          break;
+      // Ensure we have a canonical customer record (for drop-down and FK integrity)
+      $customer_id = null;
+      $findCust = $conn->prepare("SELECT customer_id FROM customer WHERE canonical_name = ?");
+      if ($findCust) {
+        $findCust->bind_param('s', $customer_name);
+        $findCust->execute();
+        $findCust->bind_result($cid);
+        if ($findCust->fetch()) {
+          $customer_id = $cid;
         }
-        
-        $subtotal = $quantity * $price_per_bottle;
-        $total_amount += $subtotal;
-        $deposit_summary[] = [
-          'bottle_type' => $bottle_type,
-          'bottle_size' => $bottle_size,
-          'quantity' => $quantity,
-          'price_per_bottle' => $price_per_bottle,
-          'subtotal' => $subtotal
-        ];
+        $findCust->close();
       }
-      
-      // Use manual amount if provided
-      if ($manual_amount !== null && $manual_amount > 0) {
-        $total_amount = $manual_amount;
+      if (!$customer_id) {
+        $addCust = $conn->prepare("INSERT INTO customer (canonical_name) VALUES (?)");
+        if ($addCust) {
+          $addCust->bind_param('s', $customer_name);
+          if ($addCust->execute()) {
+            $customer_id = $addCust->insert_id;
+          }
+          $addCust->close();
+        }
       }
-      
-      if (!$all_valid) {
-        $error = 'Invalid bottle information. Please check all entries.';
+
+      if (!$customer_id) {
+        $error = 'Failed to resolve customer record.';
+      }
+
+    // Decode submitted bottle list JSON
+    $decoded = json_decode($bottles_json, true);
+    if (!is_array($decoded) || json_last_error() !== JSON_ERROR_NONE) {
+      $error = 'Invalid bottle data submitted.';
+    }
+
+    // Handle both array format and object format with manual_amount
+    $manual_amount = null;
+    if (empty($error)) {
+      if (isset($decoded['bottles']) && is_array($decoded['bottles'])) {
+        $bottles = $decoded['bottles'];
+        $manual_amount = floatval($decoded['manual_amount'] ?? 0);
+      } elseif (is_array($decoded)) {
+        $bottles = $decoded;
       } else {
-        // Create ONE deposit record with total amount
-        $deposit_details = implode(' + ', array_map(function($item) {
-          return $item['quantity'] . "x " . $item['bottle_type'] . " {$item['bottle_size']} (₱" . number_format($item['price_per_bottle'], 2, '.', ',') . ")";
-        }, $deposit_summary));
+        $bottles = [];
+      }
+
+      if (!$bottles || !is_array($bottles) || count($bottles) === 0) {
+        $error = 'Please add at least one bottle type to the deposit.';
+      } else {
+        $total_amount = 0;
+        $all_valid = true;
+        $deposit_summary = [];
+
+        // Validate all bottles and calculate total
+        foreach ($bottles as $bottle) {
+          $bottle_type = trim($bottle['bottle_type'] ?? '');
+          $quantity = intval($bottle['quantity'] ?? 0);
+          $price_per_bottle = floatval($bottle['price_per_bottle'] ?? 0);
+          $bottle_size = $bottle['bottle_size'] ?? 'small';
+          $with_case = isset($bottle['with_case']) ? intval($bottle['with_case']) : 0;
+          $case_quantity = isset($bottle['case_quantity']) ? intval($bottle['case_quantity']) : 0;
+
+          if (empty($bottle_type) || $quantity <= 0) {
+            $all_valid = false;
+            break;
+          }
+
+          // If type_id was provided, resolve canonical type name/size/price from bottle_types to keep records consistent
+          $type_id = intval($bottle['type_id'] ?? 0);
+          if ($type_id > 0) {
+            $ptype = $conn->prepare("SELECT type_name, bottle_size, price_per_bottle FROM bottle_types WHERE type_id = ? LIMIT 1");
+            if ($ptype) {
+              $ptype->bind_param('i', $type_id);
+              $ptype->execute();
+              $tres = $ptype->get_result();
+              if ($trow = $tres->fetch_assoc()) {
+                $bottle_type = $trow['type_name'];
+                if (empty($bottle_size)) {
+                  $bottle_size = $trow['bottle_size'];
+                }
+                $price_per_bottle = floatval($trow['price_per_bottle']);
+              }
+              $ptype->close();
+            }
+          }
+
+          if (empty($bottle_type) || $quantity <= 0 || $type_id <= 0) {
+            $all_valid = false;
+            break;
+          }
+
+          $subtotal = $quantity * $price_per_bottle;
+          $total_amount += $subtotal;
+          $deposit_summary[] = [
+            'type_id' => $type_id,
+            'bottle_type' => $bottle_type,
+            'bottle_size' => $bottle_size,
+            'quantity' => $quantity,
+            'price_per_bottle' => $price_per_bottle,
+            'subtotal' => $subtotal,
+            'with_case' => $with_case,
+            'case_quantity' => $case_quantity
+          ];
+        }
+
+        // Use manual amount if provided
+        if ($manual_amount !== null && $manual_amount > 0) {
+          $total_amount = $manual_amount;
+        }
+
+        if (!$all_valid) {
+          $error = 'Invalid bottle information. Please check all entries.';
+        } else {
+          // Create ONE deposit record with total amount
+          $deposit_details = implode(' + ', array_map(function($item) {
+            return $item['quantity'] . "x " . $item['bottle_type'] . " {$item['bottle_size']} (₱" . number_format($item['price_per_bottle'], 2, '.', ',') . ")";
+          }, $deposit_summary));
         
         $summary_type = count($deposit_summary) > 1 ? "Multiple" : $deposit_summary[0]['bottle_type'];
         $summary_qty = array_sum(array_column($deposit_summary, 'quantity'));
         
-        $ins = $conn->prepare("INSERT INTO deposit (user_id, customer_name, bottle_type, quantity, amount, deposit_date) VALUES (?, ?, ?, ?, ?, NOW())");
-        $ins->bind_param('issid', $user_id, $customer_name, $summary_type, $summary_qty, $total_amount);
-        
-        if ($ins->execute()) {
-          // Log to stock_log with detailed breakdown
+        // Aggregate case info for summary deposit record
+        $aggregate_with_case = 0;
+        $aggregate_case_quantity = 0;
+        foreach ($deposit_summary as $ds) {
+          if (!empty($ds['with_case'])) $aggregate_with_case = 1;
+          $aggregate_case_quantity += intval($ds['case_quantity'] ?? 0);
+        }
+
+        // Determine a representative type_id/size for the summary record (use the first bottle entry)
+        $summary_type_id = intval($deposit_summary[0]['type_id'] ?? 0);
+        $summary_type = count($deposit_summary) > 1 ? "Multiple" : $deposit_summary[0]['bottle_type'];
+        $summary_size = $deposit_summary[0]['bottle_size'] ?? 'small';
+        $summary_qty = array_sum(array_column($deposit_summary, 'quantity'));
+
+        if (!$customer_id) {
+          $error = 'Failed to resolve customer record.';
+        } else {
+          $ins = $conn->prepare("INSERT INTO deposit (user_id, customer_id, customer_name, type_id, quantity, with_case, case_quantity, amount, bottle_size, deposit_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())");
+          $ins->bind_param('iisiiiids', $user_id, $customer_id, $customer_name, $summary_type_id, $summary_qty, $aggregate_with_case, $aggregate_case_quantity, $total_amount, $summary_size);
+
+          if ($ins->execute()) {
+          // Summary stock_log entry
           $stock_details = "Deposit — " . $deposit_details . " | Total: ₱" . number_format($total_amount, 2, '.', ',');
-          $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, amount, details) VALUES (?, 'Deposit', ?, ?, ?, ?, ?)");
-          $log->bind_param('issiis', $user_id, $customer_name, $summary_type, $summary_qty, $total_amount, $stock_details);
+          $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_id, type_id, customer_name, bottle_type, quantity, amount, details, with_case, case_quantity, bottle_size) VALUES (?, 'Deposit', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+          $log->bind_param('iiissidsiis', $user_id, $customer_id, $summary_type_id, $customer_name, $summary_type, $summary_qty, $total_amount, $stock_details, $aggregate_with_case, $aggregate_case_quantity, $summary_size);
           $log->execute();
           $log->close();
-          
+
+          // Also create per-bottle stock_log entries so returns UI can auto-detect per-type with_case
+          foreach ($deposit_summary as $ds) {
+            $per_amount = $ds['subtotal'];
+            $per_details = "Deposit — " . $ds['quantity'] . "x " . $ds['bottle_type'] . " " . $ds['bottle_size'] . " (₱" . number_format($ds['price_per_bottle'], 2, '.', ',') . ")";
+            $plog = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_id, type_id, customer_name, bottle_type, quantity, amount, details, with_case, case_quantity, bottle_size) VALUES (?, 'Deposit', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $plog_with_case = intval($ds['with_case']);
+            $plog_case_quantity = intval($ds['case_quantity']);
+            $plog->bind_param('iiissidsiis', $user_id, $customer_id, $ds['type_id'], $customer_name, $ds['bottle_type'], $ds['quantity'], $per_amount, $per_details, $plog_with_case, $plog_case_quantity, $ds['bottle_size']);
+            $plog->execute();
+            $plog->close();
+          }
+
           $msg = '✓ Multi-bottle deposit recorded! Total: ₱' . number_format($total_amount, 2, '.', ',');
           header("refresh:2;url=index.php");
         } else {
           $error = 'Database error: ' . $ins->error;
         }
-        $ins->close();
+        if (isset($ins) && $ins) {
+          $ins->close();
+        }
       }
     }
   }
+}
+}
 }
 
 // Admin edit handling
@@ -294,6 +427,7 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
     $up->close();
   }
 }
+
 ?>
 <!DOCTYPE html>
 <html>
@@ -331,6 +465,28 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id'
     .topbar .toggle-sidebar { background:none; border:none; font-size:18px; cursor:pointer; color:#2d6a6a; font-weight:600; display:none; transition:0.3s; }
     .topbar .toggle-sidebar:hover { color:#00796b; }
     @media (max-width:768px) { .topbar .toggle-sidebar { display:block; } }
+
+    /* customer name autocomplete dropdown */
+    .suggestions {
+      position: relative;
+      margin-top: 4px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      background: #fff;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+      max-height: 220px;
+      overflow-y: auto;
+      font-size: 14px;
+      z-index: 10;
+    }
+    .suggestions.hidden { display: none; }
+    .suggestion-item {
+      padding: 10px 12px;
+      cursor: pointer;
+      border-bottom: 1px solid rgba(0,0,0,0.05);
+    }
+    .suggestion-item:last-child { border-bottom: none; }
+    .suggestion-item:hover { background: #f2f7f7; }
   </style>
 </head>
 <body>
@@ -345,40 +501,118 @@ function toggleSidebar(){
 }
 
 // Auto-hide notifications after 4.5 seconds
-document.addEventListener('DOMContentLoaded', function() {
+ document.addEventListener('DOMContentLoaded', function() {
   const notification = document.getElementById('notification');
   const errorNotification = document.getElementById('error-notification');
-  
+
   if(notification) {
     setTimeout(() => {
       notification.style.animation = 'slideUp 0.5s ease-in-out forwards';
     }, 4500);
   }
-  
+
   if(errorNotification) {
     setTimeout(() => {
       errorNotification.style.animation = 'slideUp 0.5s ease-in-out forwards';
     }, 4500);
   }
 });
-</script>
 
-<!-- Sidebar Overlay -->
-<div class="sidebar-overlay" onclick="toggleSidebar()"></div>
+    function toggleSidebar(){
+      const sidebar = document.querySelector('.sidebar');
+      const overlay = document.querySelector('.sidebar-overlay');
+      if(sidebar) sidebar.classList.toggle('active');
+      if(overlay) overlay.classList.toggle('active');
+    }
 
-<!-- Sidebar -->
-<div class="sidebar">
-    <div class="brand">
-        <h1>BB</h1>
-    </div>
-    <nav class="sidebar-nav">
-        <a href="index.php">Dashboard</a>
-        <a href="deposit.php">Deposit</a>
-        <a href="returns.php">Returns</a>
-        <a href="stock_log.php">Stock Log</a>
-        <?php if($is_admin): ?>
-          <a href="/admin/admin_panel.php#users-section" > Users</a>
-        <?php endif; ?>
+    // Auto-hide notifications after 4.5 seconds
+    document.addEventListener('DOMContentLoaded', function() {
+      const notification = document.getElementById('notification');
+      const errorNotification = document.getElementById('error-notification');
+  
+      if(notification) {
+        setTimeout(() => {
+          notification.style.animation = 'slideUp 0.5s ease-in-out forwards';
+        }, 4500);
+      }
+  
+      if(errorNotification) {
+        setTimeout(() => {
+          errorNotification.style.animation = 'slideUp 0.5s ease-in-out forwards';
+        }, 4500);
+      }
+    });
+
+    // Multi-bottle deposit functionality
+    var bottleTypes = <?php echo json_encode(array_map(fn($b) => [
+      'type_id' => intval($b['type_id']),
+      'type_name' => $b['type_name'],
+      'bottle_size' => $b['bottle_size'],
+      'price_per_bottle' => (float)$b['price_per_bottle']
+    ], $bottle_types_list)); ?>;
+
+    let bottleCount = 0;
+
+    function formatPrice(num) {
+      return num.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    }
+
+    window.addBottleRow = function() {
+      const container = document.getElementById('bottleList');
+      const rowId = 'bottle_' + (++bottleCount);
+      const html = `
+        <div class="bottle-row" id="${rowId}" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;padding:12px;background:white;border-radius:6px;border:1px solid #eee;">
+          <select onchange="updateBottleInfo(this)" style="flex:1.2;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;">
+            <option value="">Select a bottle type</option>
+            ${bottleTypes.map(b => `<option value="${b.type_id}" data-type-id="${b.type_id}" data-type-name="${b.type_name}" data-bottle-size="${b.bottle_size}" data-price="${b.price_per_bottle}">${b.type_name} ${b.bottle_size} ${b.price_per_bottle ? '₱'+Number(b.price_per_bottle).toFixed(2): ''}</option>`).join('')}
+          </select>
+          <input type="number" min="1" placeholder="Qty" class="quantity-input" style="width:70px;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;" onchange="updateTotal()">
+          <label style="display:flex;align-items:center;gap:8px;margin:0 6px;">
+            <input type="checkbox" class="with-case-checkbox" style="width:18px;height:18px;cursor:pointer;margin:0;"> With case
+          </label>
+          <input type="number" min="0" placeholder="Cases" class="case-quantity-input" style="width:80px;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;" value="0">
+          <div class="price-display" style="width:80px;color:#00796b;font-weight:600;padding:8px;border-radius:4px;text-align:right;">₱0.00</div>
+          <div class="subtotal" style="width:80px;color:#26a69a;font-weight:600;padding:8px;border-radius:4px;text-align:right;">₱0.00</div>
+          <button type="button" onclick="removeBottleRow('${rowId}')" style="padding:8px 12px;background:#ef5350;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">Remove</button>
+        </div>
+      `;
+      container.insertAdjacentHTML('beforeend', html);
+    }
+
+    function updateBottleInfo(select) {
+      const row = select.closest('.bottle-row');
+      const opt = select.options[select.selectedIndex];
+      const type = opt ? (opt.dataset.typeName || '') : '';
+      const size = opt ? (opt.dataset.bottleSize || '') : '';
+      const priceNum = opt && opt.dataset.price ? parseFloat(opt.dataset.price) : 0;
+      row.dataset.typeId = opt ? (opt.dataset.typeId || '') : '';
+      row.dataset.bottleType = type;
+      row.dataset.bottleSize = size;
+      row.dataset.pricePerBottle = priceNum;
+      row.querySelector('.price-display').textContent = '₱' + formatPrice(priceNum);
+      updateTotal();
+    }
+
+    function updateTotal() {
+      let total = 0;
+      const bottleList = document.getElementById('bottleList');
+      bottleList.querySelectorAll('.bottle-row').forEach(row => {
+        const qty = parseInt(row.querySelector('.quantity-input').value) || 0;
+        const price = parseFloat(row.dataset.pricePerBottle) || 0;
+        const subtotal = qty * price;
+        row.querySelector('.subtotal').textContent = '₱' + formatPrice(subtotal);
+        total += subtotal;
+      });
+      document.getElementById('totalAmount').textContent = '₱' + formatPrice(total);
+    }
+
+    function removeBottleRow(rowId) {
+      document.getElementById(rowId).remove();
+      updateTotal();
+    }
+    }
+  // ...existing code...
+    </script>
         <a href="logout.php" class="logout">Logout</a>
     </nav>
 </div>
@@ -442,12 +676,13 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="form-row" style="margin-bottom:25px;">
           <div class="col" style="min-width:100%; flex:1;">
             <label>Customer Name</label>
-            <input type="text" name="customer_name" id="customer_name" list="customer_list" placeholder="Enter customer name" required>
+            <input type="text" name="customer_name" id="customer_name" list="customer_list" placeholder="Enter customer name" autocomplete="off" required>
             <datalist id="customer_list">
               <?php foreach($deposit_customers as $c): ?>
                 <option value="<?= htmlspecialchars($c) ?>">
               <?php endforeach; ?>
             </datalist>
+            <div id="customer_suggestions" class="suggestions" style="display:none;"></div>
           </div>
         </div>
 
@@ -466,7 +701,7 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
             <div>
               <label style="color:#666;font-size:13px;font-weight:600;display:block;margin-bottom:8px;">Or Enter Manual Amount:</label>
-              <input type="number" step="0.01" min="0" id="manualAmount" name="manual_amount" placeholder="Override total" style="width:150px;padding:10px;border:2px solid #26a69a;border-radius:4px;font-size:14px;font-weight:600;color:#26a69a;">
+              <input type="number" step="0.01" min="0" id="manualAmount" name="manual_amount" placeholder="Discount" style="width:150px;padding:10px;border:2px solid #26a69a;border-radius:4px;font-size:14px;font-weight:600;color:#26a69a;">
             </div>
           </div>
         </div>
@@ -485,7 +720,7 @@ document.addEventListener('DOMContentLoaded', function() {
           <p style="color:#2d6a6a;font-weight:600;font-size:12px;margin:0 0 8px 0;">Existing Types:</p>
           <div style="display:flex;flex-wrap:wrap;gap:6px;">
             <?php foreach ($bottle_types_list as $type): ?>
-              <div style="background:#26a69a;color:white;padding:5px 10px;border-radius:4px;font-size:12px;font-weight:500;display:flex;gap:6px;align-items:center;">
+              <div id="bottle_type_<?= $type['type_id'] ?>" data-type-id="<?= $type['type_id'] ?>" style="background:#26a69a;color:white;padding:5px 10px;border-radius:4px;font-size:12px;font-weight:500;display:flex;gap:6px;align-items:center;">
                 <span><?= htmlspecialchars($type['type_name']) ?> <?= htmlspecialchars($type['bottle_size']) ?> ₱<?= number_format($type['price_per_bottle'], 2) ?></span>
                 <?php if ($is_admin): ?>
                   <button type="button" class="edit-btn" onclick="editBottleType(<?= $type['type_id'] ?>, '<?= htmlspecialchars(addslashes($type['type_name'])) ?>', '<?= htmlspecialchars(addslashes($type['bottle_size'])) ?>', <?= (float)$type['price_per_bottle'] ?>)" style="background:none;border:none;color:white;cursor:pointer;padding:0;font-size:12px;opacity:0.8;" title="Edit">✎</button>
@@ -594,6 +829,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
   </div>
 
+<script id="bottleTypesData" type="application/json">
+<?= json_encode(array_map(fn($b) => [
+  'type_id' => intval($b['type_id']),
+  'type_name' => $b['type_name'],
+  'bottle_size' => $b['bottle_size'],
+  'price_per_bottle' => (float)$b['price_per_bottle']
+], $bottle_types_list)); ?>
+</script>
 <script>
 function toggleSidebar(){
   const sidebar = document.querySelector('.sidebar');
@@ -612,6 +855,7 @@ document.querySelectorAll('.sidebar-nav a').forEach(link => {
 
 // Multi-bottle deposit functionality
 const bottleTypes = <?php echo json_encode(array_map(fn($b) => [
+  'type_id' => intval($b['type_id']),
   'type_name' => $b['type_name'],
   'bottle_size' => $b['bottle_size'],
   'price_per_bottle' => (float)$b['price_per_bottle']
@@ -624,29 +868,36 @@ function formatPrice(num) {
   return num.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-function addBottleRow() {
+window.addBottleRow = function() {
   const container = document.getElementById('bottleList');
   const rowId = 'bottle_' + (++bottleCount);
   
-  const html = `
-    <div class="bottle-row" id="${rowId}" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;padding:12px;background:white;border-radius:6px;border:1px solid #eee;">
-      <select onchange="updateBottleInfo(this)" style="flex:1.2;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;">
-        <option value="">Select a bottle type</option>
-        ${bottleTypes.map(b => `<option value="${b.type_name}|${b.bottle_size}|${b.price_per_bottle}">${b.type_name} ${b.bottle_size}</option>`).join('')}
-      </select>
-      <input type="number" min="1" placeholder="Qty" class="quantity-input" style="width:70px;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;" onchange="updateTotal()">
-      <div class="price-display" style="width:80px;color:#00796b;font-weight:600;padding:8px;border-radius:4px;text-align:right;">₱0.00</div>
-      <div class="subtotal" style="width:80px;color:#26a69a;font-weight:600;padding:8px;border-radius:4px;text-align:right;">₱0.00</div>
-      <button type="button" onclick="removeBottleRow('${rowId}')" style="padding:8px 12px;background:#ef5350;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">Remove</button>
-    </div>
-  `;
+      const html = `
+        <div class="bottle-row" id="${rowId}" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;padding:12px;background:white;border-radius:6px;border:1px solid #eee;">
+          <select onchange="updateBottleInfo(this)" style="flex:1.2;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;">
+            <option value="">Select a bottle type</option>
+            ${bottleTypes.map(b => `<option value="${b.type_id}" data-type-id="${b.type_id}" data-type-name="${b.type_name}" data-bottle-size="${b.bottle_size}" data-price="${b.price_per_bottle}">${b.type_name} ${b.bottle_size} ${b.price_per_bottle ? '₱'+Number(b.price_per_bottle).toFixed(2): ''}</option>`).join('')}
+          </select>
+          <input type="number" min="1" placeholder="Qty" class="quantity-input" style="width:70px;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;" onchange="updateTotal()">
+          <label style="display:flex;align-items:center;gap:8px;margin:0 6px;">
+            <input type="checkbox" class="with-case-checkbox" style="width:18px;height:18px;cursor:pointer;margin:0;"> With case
+          </label>
+          <input type="number" min="0" placeholder="Cases" class="case-quantity-input" style="width:80px;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;" value="0">
+          <div class="price-display" style="width:80px;color:#00796b;font-weight:600;padding:8px;border-radius:4px;text-align:right;">₱0.00</div>
+          <div class="subtotal" style="width:80px;color:#26a69a;font-weight:600;padding:8px;border-radius:4px;text-align:right;">₱0.00</div>
+          <button type="button" onclick="removeBottleRow('${rowId}')" style="padding:8px 12px;background:#ef5350;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">Remove</button>
+        </div>
+      `;
   container.insertAdjacentHTML('beforeend', html);
 }
 
 function updateBottleInfo(select) {
   const row = select.closest('.bottle-row');
-  const [type, size, price] = select.value.split('|');
-  const priceNum = parseFloat(price);
+  const opt = select.options[select.selectedIndex];
+  const type = opt ? (opt.dataset.typeName || '') : '';
+  const size = opt ? (opt.dataset.bottleSize || '') : '';
+  const priceNum = opt && opt.dataset.price ? parseFloat(opt.dataset.price) : 0;
+  row.dataset.typeId = opt ? (opt.dataset.typeId || '') : '';
   row.dataset.bottleType = type;
   row.dataset.bottleSize = size;
   row.dataset.pricePerBottle = priceNum;
@@ -727,7 +978,7 @@ window.addEventListener('DOMContentLoaded', function() {
   
   // Deposit form submission
   const depositForm = document.getElementById('depositForm');
-  if (depositForm) {
+  if (depositForm) 
     depositForm.addEventListener('submit', function(e) {
       e.preventDefault();
       const bottleList = document.getElementById('bottleList');
@@ -736,13 +987,20 @@ window.addEventListener('DOMContentLoaded', function() {
       bottleList.querySelectorAll('.bottle-row').forEach(row => {
         const qty = parseInt(row.querySelector('.quantity-input').value);
         if (row.dataset.bottleType && qty > 0) {
-          bottles.push({
-            bottle_type: row.dataset.bottleType,
-            bottle_size: row.dataset.bottleSize,
-            quantity: qty,
-            price_per_bottle: parseFloat(row.dataset.pricePerBottle)
-          });
-        }
+            const withCaseEl = row.querySelector('.with-case-checkbox');
+            const caseQtyEl = row.querySelector('.case-quantity-input');
+            const withCaseVal = withCaseEl && withCaseEl.checked ? 1 : 0;
+            const caseQtyVal = caseQtyEl ? parseInt(caseQtyEl.value) || 0 : 0;
+            bottles.push({
+              type_id: parseInt(row.dataset.typeId) || 0,
+              bottle_type: row.dataset.bottleType,
+              bottle_size: row.dataset.bottleSize,
+              quantity: qty,
+              price_per_bottle: parseFloat(row.dataset.pricePerBottle),
+              with_case: withCaseVal,
+              case_quantity: caseQtyVal
+            });
+          }
       });
       
       if (bottles.length === 0) {
@@ -758,8 +1016,60 @@ window.addEventListener('DOMContentLoaded', function() {
       }
       this.submit();
     });
-  }
-}); // Close DOMContentLoaded event listener
+
+    // Customer name autocomplete matching
+    const customerInput = document.getElementById('customer_name');
+    const suggestionBox = document.getElementById('customer_suggestions');
+    const customerNames = <?= json_encode(array_values($deposit_customers)) ?>;
+
+    function renderSuggestions(matches) {
+      suggestionBox.innerHTML = '';
+      if (!matches.length) {
+        suggestionBox.style.display = 'none';
+        return;
+      }
+      matches.forEach(name => {
+        const div = document.createElement('div');
+        div.className = 'suggestion-item';
+        div.textContent = name;
+        div.addEventListener('mousedown', function(e) {
+          // mousedown instead of click to avoid blur before selection
+          e.preventDefault();
+          customerInput.value = name;
+          suggestionBox.style.display = 'none';
+        });
+        suggestionBox.appendChild(div);
+      });
+      suggestionBox.style.display = 'block';
+    }
+
+    if (customerInput && suggestionBox) {
+      customerInput.addEventListener('input', function() {
+        const q = this.value.trim().toLowerCase();
+        if (!q) {
+          suggestionBox.style.display = 'none';
+          return;
+        }
+        const matches = customerNames.filter(n => n.toLowerCase().includes(q)).slice(0, 10);
+        renderSuggestions(matches);
+      });
+
+      customerInput.addEventListener('blur', function() {
+        setTimeout(() => {
+          suggestionBox.style.display = 'none';
+        }, 200);
+      });
+
+      customerInput.addEventListener('focus', function() {
+        const q = this.value.trim().toLowerCase();
+        if (q) {
+          const matches = customerNames.filter(n => n.toLowerCase().includes(q)).slice(0, 10);
+          renderSuggestions(matches);
+        }
+      });
+    }
+
+  
 
 </script>
 </body>

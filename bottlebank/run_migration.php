@@ -8,6 +8,9 @@ $migrations = [
   "UPDATE `bottle_types` SET `bottle_size` = '8oz', `price_per_bottle` = 12.00 WHERE `type_name` = 'sprite'",
   "UPDATE `bottle_types` SET `bottle_size` = '500ml', `price_per_bottle` = 20.00 WHERE `type_name` = 'royal'",
   "INSERT INTO `bottle_types` (`type_name`, `bottle_size`, `price_per_bottle`) VALUES ('red horse', '500ml', 55.00) ON DUPLICATE KEY UPDATE `bottle_size` = VALUES(`bottle_size`), `price_per_bottle` = VALUES(`price_per_bottle`)"
+  , "-- Adjust unique constraint to allow same name with different sizes",
+  "ALTER TABLE `bottle_types` DROP INDEX `type_name`",
+  "ALTER TABLE `bottle_types` ADD UNIQUE KEY `uniq_type_size` (`type_name`,`bottle_size`)"
 ];
 
 foreach ($migrations as $sql) {

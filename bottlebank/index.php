@@ -421,13 +421,17 @@ function toggleSidebar(){
         <h3>Recent Activity</h3>
         <?php
         $query = "
-            (SELECT 'Deposit' AS type, deposit_date AS date, CONCAT(quantity,' bottles deposited (',bottle_type,')') AS details FROM deposit WHERE user_id=?)
+            (SELECT 'Deposit' AS type, d.deposit_date AS date,
+                CONCAT(d.quantity,' bottles deposited (', COALESCE(b.type_name, 'Unknown'), ')') AS details
+             FROM deposit d
+             LEFT JOIN bottle_types b ON d.type_id = b.type_id
+             WHERE d.user_id = ?)
             UNION
-            (SELECT 'Return' AS type, return_date AS date, CONCAT(quantity,' bottles returned (',bottle_type,')') AS details FROM returns WHERE user_id=?)
+            (SELECT 'Return' AS type, return_date AS date, CONCAT(quantity,' bottles returned (',bottle_type,')') AS details FROM returns WHERE user_id = ?)
             UNION
-            (SELECT 'Refund' AS type, refund_date AS date, CONCAT('Refunded ₱',amount) AS details FROM refund WHERE user_id=?)
+            (SELECT 'Refund' AS type, refund_date AS date, CONCAT('Refunded ₱',amount) AS details FROM refund WHERE user_id = ?)
             UNION
-            (SELECT 'Stock Log' AS type, date_logged AS date, CONCAT(action_type,' — ',quantity,' bottles (₱',amount,')') AS details FROM stock_log WHERE user_id=?)
+            (SELECT 'Stock Log' AS type, date_logged AS date, CONCAT(action_type,' — ',quantity,' bottles (₱',amount,')') AS details FROM stock_log WHERE user_id = ?)
             ORDER BY date DESC
             LIMIT 10
         ";

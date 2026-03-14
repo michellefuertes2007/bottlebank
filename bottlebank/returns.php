@@ -23,6 +23,9 @@ ensureColumn($conn, 'returns', 'bottle_size', "bottle_size VARCHAR(10) DEFAULT '
 ensureColumn($conn, 'customers', 'bottle_size', "bottle_size VARCHAR(10) DEFAULT 'small'");
 // log table may eventually store size too
 ensureColumn($conn, 'stock_log', 'bottle_size', "bottle_size VARCHAR(10) DEFAULT 'small'");
+// ensure type_id columns exist to reference bottle_types
+ensureColumn($conn, 'returns', 'type_id', 'type_id INT NULL');
+ensureColumn($conn, 'stock_log', 'type_id', 'type_id INT NULL');
 
 session_start();
 if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit(); }
@@ -34,7 +37,7 @@ $error = '';
 
 // Get all bottle types from database
 $bottle_types_list = [];
-$btResult = $conn->query("SELECT type_id, type_name FROM bottle_types ORDER BY type_name ASC");
+$btResult = $conn->query("SELECT type_id, type_name, bottle_size, price_per_bottle FROM bottle_types ORDER BY type_name ASC");
 if ($btResult) {
   while ($row = $btResult->fetch_assoc()) {
     $bottle_types_list[] = $row;
@@ -45,27 +48,37 @@ if ($btResult) {
 function getCustomerAvailableBottles($conn, $customer_name) {
   $available_bottles = [];
   
-  // Get all deposits for this customer from stock_log
-  $deposits_query = $conn->prepare("SELECT details FROM stock_log WHERE action_type='Deposit' AND customer_name = ? ORDER BY date_logged DESC");
+  // Get per-item deposit rows for this customer from stock_log (avoid the summary row)
+  $deposits_query = $conn->prepare("SELECT bottle_type, bottle_size, quantity, details FROM stock_log WHERE action_type='Deposit' AND customer_name = ? AND bottle_size IS NOT NULL AND bottle_size != '' ORDER BY date_logged DESC");
   if (!$deposits_query) return [];
-  
+
   $deposits_query->bind_param('s', $customer_name);
   $deposits_query->execute();
   $deposits_result = $deposits_query->get_result();
-  
-  // Parse deposits to extract bottle info
+
+  // Parse deposits to extract bottle info (prefer explicit columns, fallback to details)
   $deposited = [];
   while ($row = $deposits_result->fetch_assoc()) {
-    if (preg_match_all('/(\d+)x\s+(\w+(?:\s+\w+)?)\s+([^(]+)\s*\(₱([\d,]+\.\d{2})\)/', $row['details'], $matches)) {
-      for ($i = 0; $i < count($matches[0]); $i++) {
-        $bottle_type = trim($matches[2][$i]);
-        $bottle_size = trim($matches[3][$i]);
-        $qty = intval($matches[1][$i]);
-        
-        if (!isset($deposited[$bottle_type])) {
-          $deposited[$bottle_type] = ['size' => $bottle_size, 'qty' => 0];
+    if (!empty($row['bottle_type']) && isset($row['quantity'])) {
+      $bottle_type = trim($row['bottle_type']);
+      $bottle_size = trim($row['bottle_size'] ?? '');
+      $qty = intval($row['quantity']);
+      if (!isset($deposited[$bottle_type])) {
+        $deposited[$bottle_type] = ['size' => $bottle_size, 'qty' => 0];
+      }
+      $deposited[$bottle_type]['qty'] += $qty;
+    } else if (!empty($row['details']) && strpos($row['details'], ' + ') === false) {
+      // fallback: only parse details when it appears to be a single-item detail (no ' + ')
+      if (preg_match_all('/(\d+)x\s+(\w+(?:\s+\w+)?)\s+([^()]+)\s*\(₱([\d,]+\.\d{2})\)/', $row['details'], $matches)) {
+        for ($i = 0; $i < count($matches[0]); $i++) {
+          $bottle_type = trim($matches[2][$i]);
+          $bottle_size = trim($matches[3][$i]);
+          $qty = intval($matches[1][$i]);
+          if (!isset($deposited[$bottle_type])) {
+            $deposited[$bottle_type] = ['size' => $bottle_size, 'qty' => 0];
+          }
+          $deposited[$bottle_type]['qty'] += $qty;
         }
-        $deposited[$bottle_type]['qty'] += $qty;
       }
     }
   }
@@ -149,6 +162,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
     
     if (!empty($return_rows)) {
       // Process each return - VALIDATE first
+      $total_return_amount = 0.0; // accumulate money owed for returned bottles
       foreach ($return_rows as $bottle) {
         $bottle_type = trim($bottle['bottle_type'] ?? '');
         $quantity = intval($bottle['quantity'] ?? 0);
@@ -158,6 +172,22 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
           continue; // Skip empty entries
         }
         
+        // If client provided type_id, resolve canonical name and default size first
+        if (isset($bottle['type_id']) && is_numeric($bottle['type_id'])) {
+          $tmp_id = intval($bottle['type_id']);
+          $pq = $conn->prepare("SELECT type_name, bottle_size FROM bottle_types WHERE type_id = ? LIMIT 1");
+          if ($pq) {
+            $pq->bind_param('i', $tmp_id);
+            $pq->execute();
+            $res = $pq->get_result();
+            if ($r = $res->fetch_assoc()) {
+              $bottle_type = $r['type_name'];
+              if (empty($bottle_size) && !empty($r['bottle_size'])) $bottle_size = $r['bottle_size'];
+            }
+            $pq->close();
+          }
+        }
+
         // VALIDATE: Check if customer can return this bottle type with this quantity
         $validation = validateReturnBottle($conn, $customer_name, $bottle_type, $bottle_size, $quantity);
         if (!$validation['valid']) {
@@ -166,22 +196,48 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
           break;
         }
         
-        // Get price per bottle from bottle_types
-        $price_query = $conn->prepare("SELECT price_per_bottle FROM bottle_types WHERE type_name = ?");
-        $price_query->bind_param('s', $bottle_type);
-        $price_query->execute();
-        $price_result = $price_query->get_result();
-        $price_row = $price_result->fetch_assoc();
-        $price_per_bottle = $price_row ? floatval($price_row['price_per_bottle']) : 0;
+        // Resolve price and canonical type name. Prefer provided type_id when present.
+        $price_per_bottle = 0;
+        $bottle_type_name = $bottle_type; // canonical name to store
+        if (isset($bottle['type_id']) && is_numeric($bottle['type_id'])) {
+          $type_id = intval($bottle['type_id']);
+          $pq = $conn->prepare("SELECT type_name, bottle_size, price_per_bottle FROM bottle_types WHERE type_id = ? LIMIT 1");
+          if ($pq) {
+            $pq->bind_param('i', $type_id);
+            $pq->execute();
+            $pr = $pq->get_result();
+            if ($prow = $pr->fetch_assoc()) {
+              $bottle_type_name = $prow['type_name'];
+              // prefer server-side size if client didn't send one
+              if (empty($bottle_size) && !empty($prow['bottle_size'])) $bottle_size = $prow['bottle_size'];
+              $price_per_bottle = floatval($prow['price_per_bottle']);
+            }
+            $pq->close();
+          }
+        } else {
+          $pq = $conn->prepare("SELECT price_per_bottle FROM bottle_types WHERE type_name = ? LIMIT 1");
+          if ($pq) {
+            $pq->bind_param('s', $bottle_type_name);
+            $pq->execute();
+            $pr = $pq->get_result();
+            if ($prow = $pr->fetch_assoc()) $price_per_bottle = floatval($prow['price_per_bottle']);
+            $pq->close();
+          }
+        }
         $return_amount = $quantity * $price_per_bottle;
-        $price_query->close();
         
-        $stmt = $conn->prepare("INSERT INTO returns (user_id, customer_name, bottle_type, quantity, bottle_size, return_date) VALUES (?, ?, ?, ?, ?, NOW())");
-        $stmt->bind_param('issis', $user_id, $customer_name, $bottle_type, $quantity, $bottle_size);
+        $with_case = isset($bottle['with_case']) ? intval($bottle['with_case']) : 0;
+        $case_quantity = isset($bottle['case_quantity']) ? intval($bottle['case_quantity']) : 0;
+        // persist type_id when available (nullable)
+        $type_id_val = (isset($bottle['type_id']) && is_numeric($bottle['type_id'])) ? intval($bottle['type_id']) : null;
+        $stmt = $conn->prepare("INSERT INTO returns (user_id, customer_name, type_id, bottle_type, quantity, bottle_size, with_case, case_quantity, return_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())");
+        $stmt->bind_param('isisisii', $user_id, $customer_name, $type_id_val, $bottle_type_name, $quantity, $bottle_size, $with_case, $case_quantity);
         if ($stmt->execute()) {
-          $details = "Return — " . $quantity . " x " . $bottle_type . " " . $bottle_size . " (₱" . number_format($price_per_bottle, 2) . ") | Return: ₱" . number_format($return_amount, 2, '.', ',');
-          $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, amount, details) VALUES (?, 'Return', ?, ?, ?, ?, ?)");
-          $log->bind_param('issids', $user_id, $customer_name, $bottle_type, $quantity, $return_amount, $details);
+          // accumulate refund amount for this return
+          $total_return_amount += $return_amount;
+          $details = "Return — " . $quantity . " x " . $bottle_type_name . " " . $bottle_size . " (₱" . number_format($price_per_bottle, 2) . ") | Return: ₱" . number_format($return_amount, 2, '.', ',');
+          $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, type_id, bottle_type, quantity, amount, details, with_case, case_quantity) VALUES (?, 'Return', ?, ?, ?, ?, ?, ?, ?, ?)");
+          $log->bind_param('isisidsii', $user_id, $customer_name, $type_id_val, $bottle_type_name, $quantity, $return_amount, $details, $with_case, $case_quantity);
           $log->execute();
           $log->close();
         } else {
@@ -193,21 +249,34 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
       }
     }
     
+    // If returns were processed but no explicit refund amount was provided,
+    // automatically set the refund amount to the total value of returned bottles.
+    if ($success && (!isset($amount) || floatval($amount) <= 0) && !empty($return_rows) && isset($total_return_amount) && $total_return_amount > 0) {
+      $amount = $total_return_amount;
+    }
+
     // Process REFUND (amount is now required)
     if ($amount > 0 && $success) {
-      $stmt = $conn->prepare("INSERT INTO refund (user_id, customer_name, amount, refund_date) VALUES (?, ?, ?, NOW())");
-      $stmt->bind_param('isd', $user_id, $customer_name, $amount);
-      if ($stmt->execute()) {
-        $details = "Refund — ₱" . number_format($amount, 2, '.', ',');
-        $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, amount, details) VALUES (?, 'Refund', ?, ?, ?)");
-        $log->bind_param('isds', $user_id, $customer_name, $amount, $details);
-        $log->execute();
-        $log->close();
+      // Only issue a refund if all bottles have been returned (no remaining available bottles)
+      $remaining = getCustomerAvailableBottles($conn, $customer_name);
+      if (count($remaining) > 0) {
+        $msg = 'Return recorded. Refund will be applied once all bottles are returned.';
+        $amount = 0; // prevent refund write
       } else {
-        $error = 'Database error: ' . $stmt->error;
-        $success = false;
+        $stmt = $conn->prepare("INSERT INTO refund (user_id, customer_name, amount, refund_date) VALUES (?, ?, ?, NOW())");
+        $stmt->bind_param('isd', $user_id, $customer_name, $amount);
+        if ($stmt->execute()) {
+          $details = "Refund — ₱" . number_format($amount, 2, '.', ',');
+          $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, amount, details) VALUES (?, 'Refund', ?, ?, ?)");
+          $log->bind_param('isds', $user_id, $customer_name, $amount, $details);
+          $log->execute();
+          $log->close();
+        } else {
+          $error = 'Database error: ' . $stmt->error;
+          $success = false;
+        }
+        $stmt->close();
       }
-      $stmt->close();
     }
     
     if ($success && (!empty($return_rows) || $amount > 0)) {
@@ -222,7 +291,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['edit_id'])) {
 // Admin edit handling
 if ($is_admin && isset($_GET['edit_id'])) {
   $edit_id = intval($_GET['edit_id']);
-  $e = $conn->prepare("SELECT return_id, customer_name, bottle_type, quantity, with_case, case_quantity FROM returns WHERE return_id = ?");
+  $e = $conn->prepare("SELECT return_id, customer_name, bottle_type, type_id, quantity, with_case, case_quantity FROM returns WHERE return_id = ?");
   $e->bind_param('i', $edit_id);
   $e->execute();
   $editRow = $e->get_result()->fetch_assoc();
@@ -245,14 +314,43 @@ if ($is_admin && $_SERVER['REQUEST_METHOD'] == "POST" && isset($_POST['edit_id']
     $new_case_quantity = 1;
   }
 
+  // If admin sent a type_id instead of name, resolve it to the canonical type_name
+  $new_type_id = null;
+  if (is_numeric($new_type)) {
+    $new_type_id = intval($new_type);
+    $tmp_id = $new_type_id;
+    $pq = $conn->prepare("SELECT type_name FROM bottle_types WHERE type_id = ? LIMIT 1");
+    if ($pq) {
+      $pq->bind_param('i', $tmp_id);
+      $pq->execute();
+      $res = $pq->get_result();
+      if ($r = $res->fetch_assoc()) {
+        $new_type = $r['type_name'];
+      }
+      $pq->close();
+    }
+  } else {
+    // try find type_id by name
+    $pq = $conn->prepare("SELECT type_id FROM bottle_types WHERE type_name = ? LIMIT 1");
+    if ($pq) {
+      $pq->bind_param('s', $new_type);
+      $pq->execute();
+      $res = $pq->get_result();
+      if ($r = $res->fetch_assoc()) {
+        $new_type_id = intval($r['type_id']);
+      }
+      $pq->close();
+    }
+  }
+
   if ($new_qty <= 0) {
     $error = 'Quantity must be greater than zero.';
   } else {
-    $u = $conn->prepare("UPDATE returns SET customer_name=?, bottle_type=?, quantity=?, with_case=?, case_quantity=? WHERE return_id=?");
-    $u->bind_param('ssiiiii', $new_customer, $new_type, $new_qty, $new_with_case, $new_case_quantity, $edit_id);
+    $u = $conn->prepare("UPDATE returns SET customer_name=?, bottle_type=?, type_id=?, quantity=?, with_case=?, case_quantity=? WHERE return_id=?");
+    $u->bind_param('ssiiiii', $new_customer, $new_type, $new_type_id, $new_qty, $new_with_case, $new_case_quantity, $edit_id);
     if ($u->execute()) {
-      $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, bottle_type, quantity, with_case, case_quantity) VALUES (?, 'Return Correction', ?, ?, ?, ?, ?)");
-      $log->bind_param('issiii', $user_id, $new_customer, $new_type, $new_qty, $new_with_case, $new_case_quantity);
+      $log = $conn->prepare("INSERT INTO stock_log (user_id, action_type, customer_name, type_id, bottle_type, quantity, with_case, case_quantity) VALUES (?, 'Return Correction', ?, ?, ?, ?, ?, ?)");
+      $log->bind_param('isisiii', $user_id, $new_customer, $new_type_id, $new_type, $new_qty, $new_with_case, $new_case_quantity);
       $log->execute(); $log->close();
       $msg = 'Return updated!';
       unset($editRow);
@@ -387,8 +485,12 @@ document.addEventListener('DOMContentLoaded', function() {
               <select name="bottle_type" required>
                 <option value="">Select type</option>
                 <?php foreach ($bottle_types_list as $type): ?>
-                  <option value="<?= htmlspecialchars($type['type_name']) ?>" <?= ($editRow['bottle_type'] ?? '') === $type['type_name'] ? 'selected' : '' ?>>
-                    <?= htmlspecialchars($type['type_name']) ?>
+                    <option value="<?= intval($type['type_id']) ?>"
+                      data-type-name="<?= htmlspecialchars($type['type_name']) ?>"
+                      data-bottle-size="<?= htmlspecialchars($type['bottle_size'] ?? '') ?>"
+                      data-price="<?= isset($type['price_per_bottle']) ? number_format((float)$type['price_per_bottle'], 2, '.', '') : '' ?>"
+                      <?= ((isset($editRow['type_id']) && intval($editRow['type_id']) === intval($type['type_id'])) || (isset($editRow['bottle_type']) && $editRow['bottle_type'] === $type['type_name'])) ? 'selected' : '' ?>>
+                    <?= htmlspecialchars($type['type_name']) ?> <?= htmlspecialchars($type['bottle_size'] ?? '') ?> <?php if(isset($type['price_per_bottle'])): ?>₱<?= number_format((float)$type['price_per_bottle'], 2) ?><?php endif; ?>
                   </option>
                 <?php endforeach; ?>
               </select>
@@ -430,7 +532,7 @@ document.addEventListener('DOMContentLoaded', function() {
           </div>
         </form>
       <?php else: ?>
-        <form method="POST" style="max-width:600px" onsubmit="return confirm('Record this transaction?')">
+        <form method="POST" style="max-width:800px" onsubmit="return confirm('Record this transaction?')">
           <div class="form-row">
             <div class="col">
               <label>Select Customer</label>
@@ -442,6 +544,7 @@ document.addEventListener('DOMContentLoaded', function() {
               </select>
             </div>
           </div>
+
           <div class="form-row">
             <div class="col">
               <label>Amount to be Refunded (Required)</label>
@@ -542,7 +645,14 @@ function fetchCustomerData(name) {
     fetch(url)
       .then(r => {
         console.log('Response status:', r.status);
-        return r.json();
+        return r.text().then(text => {
+          try { return JSON.parse(text); }
+          catch (e) {
+            console.error('Failed to parse JSON from API response. Raw response:');
+            console.error(text);
+            throw new Error('Invalid JSON response from server');
+          }
+        });
       })
       .then(resp => {
         console.log('API Response:', resp);
@@ -559,6 +669,7 @@ function fetchCustomerData(name) {
             console.log('Source for autofill (deposit or customer):', d0);
             if(d0){
               const bt = d0.bottle_type;
+              const bsize = d0.bottle_size || '';
               const qty = d0.quantity;
               const amt = (typeof d0.amount !== 'undefined') ? d0.amount : 0;
               const withCaseVal = d0.with_case;
@@ -577,8 +688,10 @@ function fetchCustomerData(name) {
             if(select){
               for(let i = 0; i < select.options.length; i++){
                 const opt = select.options[i];
-                console.log('Option', i, ':', opt.value, 'comparing to', bt, '--match?', opt.value === bt);
-                if(opt.value === bt){ opt.selected = true; console.log('Option selected'); break; }
+                const optName = opt.dataset.typeName || '';
+                const optSize = opt.dataset.bottleSize || '';
+                console.log('Option', i, ':', optName, optSize, 'comparing to', bt, bsize, '--match?', optName === bt && (optSize === bsize || bsize === ''));
+                if(optName === bt && (optSize === bsize || bsize === '')){ opt.selected = true; console.log('Option selected'); break; }
               }
             }
             
@@ -670,7 +783,10 @@ function fetchCustomerDataEdit(name) {
   if(name){
     const url = 'api/deposit.php?customer=' + encodeURIComponent(name);
     fetch(url)
-      .then(r => r.json())
+      .then(r => r.text().then(text => {
+        try { return JSON.parse(text); }
+        catch (e) { console.error('Edit autofill: invalid JSON response:', text); throw e; }
+      }))
       .then(resp => {
         if(!resp.deposits || !resp.deposits.length) { console.log('No deposits for', name); return; }
         const d0 = resp.deposits[0];
@@ -683,11 +799,16 @@ function fetchCustomerDataEdit(name) {
         // Fill bottle type
         const selectBt = editForm.querySelector('select[name="bottle_type"]');
         if(selectBt && d0.bottle_type){
+          const desiredName = d0.bottle_type;
+          const desiredSize = d0.bottle_size || '';
           for(let i = 0; i < selectBt.options.length; i++){
-            if(selectBt.options[i].value === d0.bottle_type){ 
-              selectBt.options[i].selected = true; 
-              console.log('Edit: bottle type set to', d0.bottle_type);
-              break; 
+            const opt = selectBt.options[i];
+            const optName = opt.dataset.typeName || '';
+            const optSize = opt.dataset.bottleSize || '';
+            if(optName === desiredName && (optSize === desiredSize || desiredSize === '')){
+              opt.selected = true;
+              console.log('Edit: bottle type set to', desiredName);
+              break;
             }
           }
         }
@@ -816,9 +937,11 @@ function addReturnBottleRow() {
   const container = document.getElementById('returnBottleList');
   const rowId = 'return_bottle_' + (++returnBottleCount);
   
-  const bottleOptions = Object.entries(availableBottlesData).map(([key, bottle]) => 
-    `<option value="${bottle.bottle_type}|${bottle.bottle_size}|${bottle.available_qty}">${bottle.bottle_type} ${bottle.bottle_size} (${bottle.available_qty} available)</option>`
-  ).join('');
+  const bottleOptions = Object.entries(availableBottlesData).map(([key, bottle]) => {
+    const idPart = (typeof bottle.type_id !== 'undefined' && bottle.type_id !== null) ? bottle.type_id : (bottle.bottle_type || '');
+    const typeNameEsc = (bottle.bottle_type || '').replace(/"/g, '&quot;');
+    return `<option value="${idPart}|${bottle.bottle_size}|${bottle.available_qty}" data-type-id="${bottle.type_id || ''}" data-type-name="${typeNameEsc}">${bottle.bottle_type} ${bottle.bottle_size} (${bottle.available_qty} available)</option>`;
+  }).join('');
   
   const html = `
     <div class="return-bottle-row" id="${rowId}" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;padding:12px;background:white;border-radius:6px;border:1px solid #eee;">
@@ -827,11 +950,18 @@ function addReturnBottleRow() {
         ${bottleOptions}
       </select>
       <input type="number" min="1" placeholder="Qty" class="return-quantity-input" style="width:70px;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;" onchange="updateReturnTotal()">
+      <label style="display:flex;align-items:center;gap:8px;margin:0 6px;">
+        <input type="checkbox" class="with-case-checkbox" style="width:18px;height:18px;cursor:pointer;margin:0;"> With case
+      </label>
+      <input type="number" min="0" placeholder="Cases" class="case-quantity-input" style="width:80px;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;" value="0" disabled>
       <div class="available-label" style="width:100px;color:#00796b;font-weight:600;padding:8px;border-radius:4px;text-align:right;">-</div>
       <button type="button" onclick="removeReturnBottleRow('${rowId}')" style="padding:8px 12px;background:#ef5350;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">Remove</button>
     </div>
   `;
   container.insertAdjacentHTML('beforeend', html);
+  // Attach handlers to newly added row
+  const newRowEl = document.getElementById(rowId);
+  if (newRowEl) attachReturnRowHandlers(newRowEl);
 }
 
 function addReturnBottleRowWithData(bottle) {
@@ -841,9 +971,13 @@ function addReturnBottleRowWithData(bottle) {
   const html = `
     <div class="return-bottle-row" id="${rowId}" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;padding:12px;background:white;border-radius:6px;border:1px solid #eee;">
       <select onchange="updateReturnBottleInfo(this)" style="flex:1.2;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;">
-        <option value="${bottle.bottle_type}|${bottle.bottle_size}|${bottle.available_qty}" selected>${bottle.bottle_type} ${bottle.bottle_size} (${bottle.available_qty} available)</option>
+        <option value="${bottle.type_id || bottle.bottle_type}|${bottle.bottle_size}|${bottle.available_qty}" data-type-id="${bottle.type_id || ''}" data-type-name="${(bottle.bottle_type||'').replace(/"/g,'&quot;')}" selected>${bottle.bottle_type} ${bottle.bottle_size} (${bottle.available_qty} available)</option>
       </select>
       <input type="number" min="1" max="${bottle.available_qty}" placeholder="Qty" class="return-quantity-input" style="width:70px;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;" onchange="updateReturnTotal()">
+      <label style="display:flex;align-items:center;gap:8px;margin:0 6px;">
+        <input type="checkbox" class="with-case-checkbox" style="width:18px;height:18px;cursor:pointer;margin:0;" ${bottle.with_case ? 'checked' : ''}> With case
+      </label>
+      <input type="number" min="0" placeholder="Cases" class="case-quantity-input" style="width:80px;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;" value="${bottle.case_quantity || 0}" ${bottle.with_case ? '' : 'disabled'}>
       <div class="available-label" style="width:100px;color:#00796b;font-weight:600;padding:8px;border-radius:4px;text-align:right;">${bottle.available_qty} available</div>
       <button type="button" onclick="removeReturnBottleRow('${rowId}')" style="padding:8px 12px;background:#ef5350;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">Remove</button>
     </div>
@@ -855,16 +989,89 @@ function addReturnBottleRowWithData(bottle) {
   row.dataset.bottleType = bottle.bottle_type;
   row.dataset.bottleSize = bottle.bottle_size;
   row.dataset.available = bottle.available_qty;
+  row.dataset.typeId = bottle.type_id || '';
   container.appendChild(newRow);
+  // Set up handlers and initial values
+  attachReturnRowHandlers(newRow);
+  // if API provided a suggested case value, enable/disable the case quantity input accordingly
+  const wc = newRow.querySelector('.with-case-checkbox');
+  const cas = newRow.querySelector('.case-quantity-input');
+  if (wc && cas) {
+    if (bottle.with_case) {
+      wc.checked = true;
+      cas.disabled = false;
+      cas.value = bottle.case_quantity || 0;
+    } else {
+      wc.checked = false;
+      cas.disabled = true;
+      cas.value = 0;
+    }
+  }
 }
 
 function updateReturnBottleInfo(select) {
   const row = select.closest('.return-bottle-row');
   const [bottle_type, bottle_size, available] = select.value.split('|');
-  row.dataset.bottleType = bottle_type;
+  // store both identifier and human-readable name when available
+  const opt = select.options[select.selectedIndex];
+  const optTypeId = opt?.dataset?.typeId || '';
+  const optTypeName = opt?.dataset?.typeName || bottle_type;
+  row.dataset.typeId = optTypeId;
+  row.dataset.bottleType = optTypeName || bottle_type;
   row.dataset.bottleSize = bottle_size;
   row.dataset.available = parseInt(available);
   row.querySelector('.available-label').textContent = available + ' available';
+  // If we have availableBottlesData for this type, prefill with_case and case_quantity
+  const key = (optTypeId ? optTypeId : optTypeName) + '_' + bottle_size;
+  if (availableBottlesData[key]) {
+    const info = availableBottlesData[key];
+    const wc = row.querySelector('.with-case-checkbox');
+    const cas = row.querySelector('.case-quantity-input');
+    if (wc && cas) {
+      if (info.with_case) {
+        wc.checked = true;
+        cas.disabled = false;
+        cas.value = info.case_quantity || 0;
+      } else {
+        wc.checked = false;
+        cas.disabled = true;
+        cas.value = 0;
+      }
+    }
+  }
+}
+
+// Attach per-row handlers (checkbox toggle, compute default case qty)
+function attachReturnRowHandlers(row) {
+  if (!row) return;
+  const wc = row.querySelector('.with-case-checkbox');
+  const cas = row.querySelector('.case-quantity-input');
+  const qty = row.querySelector('.return-quantity-input');
+  const size = row.dataset.bottleSize || (row.querySelector('select')?.value.split('|')[1] || 'small');
+  const factor = (size === '1l') ? 12 : 24;
+  if (wc) {
+    wc.addEventListener('change', function() {
+      if (!cas) return;
+      if (this.checked) {
+        cas.disabled = false;
+        const qv = parseInt(qty?.value) || 0;
+        if ((parseInt(cas.value) || 0) <= 0 && qv > 0) {
+          cas.value = Math.floor(qv / factor) || 1;
+        }
+      } else {
+        cas.disabled = true;
+        cas.value = 0;
+      }
+    });
+  }
+  if (qty) {
+    qty.addEventListener('input', function(){
+      const qv = parseInt(this.value) || 0;
+      if (wc && wc.checked && cas) {
+        if ((parseInt(cas.value) || 0) <= 0 && qv > 0) cas.value = Math.floor(qv / factor) || 1;
+      }
+    });
+  }
 }
 
 function updateReturnTotal() {
@@ -900,19 +1107,23 @@ window.addEventListener('DOMContentLoaded', function() {
             availableBottlesData = {};
             // Auto-populate amount field with remaining refund
             const amountField = document.getElementById('refund_amount');
-            if (data.remaining_refund_amount) {
+            // Set refund amount to remaining refundable value (deposit - returned)
+            if (typeof data.remaining_refund_amount !== 'undefined') {
               amountField.value = data.remaining_refund_amount.toFixed(2);
             }
-            
+
             if (data.available_bottles && data.available_bottles.length > 0) {
               data.available_bottles.forEach(bottle => {
-                const key = bottle.bottle_type + '_' + bottle.bottle_size;
+                const key = (bottle.type_id ? bottle.type_id : bottle.bottle_type) + '_' + bottle.bottle_size;
                 availableBottlesData[key] = bottle;
                 // Automatically add a row for each available bottle
                 addReturnBottleRowWithData(bottle);
               });
-              containerDiv.innerHTML = '<div style="padding:10px;background:#fff9e6;border:1px solid #ffe0b2;border-radius:4px;color:#e65100;font-size:13px;margin-bottom:15px;"><strong>✓ Bottles available to return (rows auto-populated below):</strong><br>' + data.available_bottles.map(b => `${b.bottle_type} ${b.bottle_size}: ${b.available_qty}/${b.deposited_qty}`).join(', ') + '<br><strong>Refund Amount:</strong> ₱' + (data.remaining_refund_amount || 0).toFixed(2) + '</div>' + containerDiv.innerHTML;
             } else {
+              // If no bottles remain, remove this customer from the dropdown so it doesn't appear selectable
+              const opt = Array.from(custSelect.options).find(o => o.value === customerName);
+              if (opt) opt.remove();
+
               containerDiv.innerHTML = '<div style="padding:10px;background:#ffebee;border:1px solid #ef5350;border-radius:4px;color:#c62828;font-size:13px;">No bottles available to return for this customer</div>';
               availableBottlesData = {};
               amountField.value = '0.00';
@@ -940,11 +1151,22 @@ window.addEventListener('DOMContentLoaded', function() {
         returnList.querySelectorAll('.return-bottle-row').forEach(row => {
           const qty = parseInt(row.querySelector('.return-quantity-input').value) || 0;
           if (row.dataset.bottleType && qty > 0) {
-            returnBottles.push({
-              bottle_type: row.dataset.bottleType,
+            const withCaseEl = row.querySelector('.with-case-checkbox');
+            const caseQtyEl = row.querySelector('.case-quantity-input');
+            const withCaseVal = withCaseEl && withCaseEl.checked ? 1 : 0;
+            const caseQtyVal = caseQtyEl ? parseInt(caseQtyEl.value) || 0 : 0;
+            // include type_id when known (numeric), keep bottle_type for backward compatibility
+            const typeIdVal = row.dataset.typeId ? parseInt(row.dataset.typeId) : null;
+            const bottleTypeName = row.dataset.bottleType || '';
+            const obj = {
+              bottle_type: bottleTypeName,
               bottle_size: row.dataset.bottleSize,
-              quantity: qty
-            });
+              quantity: qty,
+              with_case: withCaseVal,
+              case_quantity: caseQtyVal
+            };
+            if (typeIdVal) obj.type_id = typeIdVal;
+            returnBottles.push(obj);
           }
         });
         

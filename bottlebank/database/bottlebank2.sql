@@ -5,6 +5,7 @@
 CREATE DATABASE IF NOT EXISTS `bottlebank` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 USE `bottlebank`;
 
+-- users
 CREATE TABLE IF NOT EXISTS `user` (
   `user_id` INT(11) NOT NULL AUTO_INCREMENT,
   `username` VARCHAR(50) NOT NULL UNIQUE,
@@ -16,15 +17,7 @@ CREATE TABLE IF NOT EXISTS `user` (
   PRIMARY KEY (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- customers (canonical names, for history and correction)
-CREATE TABLE IF NOT EXISTS `customer` (
-  `customer_id` INT(11) NOT NULL AUTO_INCREMENT,
-  `canonical_name` VARCHAR(100) NOT NULL,
-  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`customer_id`),
-  UNIQUE KEY `uniq_canonical_name` (`canonical_name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
+-- bottle types (with sizes and pricing for multi-bottle deposits)
 CREATE TABLE IF NOT EXISTS `bottle_types` (
   `type_id` INT(11) NOT NULL AUTO_INCREMENT,
   `type_name` VARCHAR(100) NOT NULL,
@@ -46,30 +39,25 @@ INSERT INTO `bottle_types` (`type_name`, `bottle_size`, `price_per_bottle`) VALU
   ('red horse', '500ml', 55.00)
 ON DUPLICATE KEY UPDATE `bottle_size` = VALUES(`bottle_size`), `price_per_bottle` = VALUES(`price_per_bottle`);
 
+-- deposit records
 CREATE TABLE IF NOT EXISTS `deposit` (
   `deposit_id` INT(11) NOT NULL AUTO_INCREMENT,
   `user_id` INT(11) NOT NULL,
-  `customer_id` INT(11) NOT NULL,
-  `type_id` INT(11) NOT NULL,
+  `customer_name` VARCHAR(100) DEFAULT NULL,
+  `bottle_type` VARCHAR(50) DEFAULT NULL,
   `quantity` INT(11) NOT NULL,
   `with_case` TINYINT(1) NOT NULL DEFAULT 0,
   `case_quantity` INT(11) DEFAULT 0,
   `amount` DECIMAL(10,2) DEFAULT 0.00,
   `deposit_date` DATETIME DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`deposit_id`),
-  KEY `idx_deposit_user` (`user_id`),
-  KEY `idx_deposit_customer` (`customer_id`),
-  KEY `idx_deposit_type` (`type_id`),
-  CONSTRAINT `fk_deposit_user` FOREIGN KEY (`user_id`) REFERENCES `user`(`user_id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_deposit_customer` FOREIGN KEY (`customer_id`) REFERENCES `customer`(`customer_id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_deposit_type` FOREIGN KEY (`type_id`) REFERENCES `bottle_types`(`type_id`) ON DELETE CASCADE
+  KEY `idx_deposit_user` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- returns
 CREATE TABLE IF NOT EXISTS `returns` (
   `return_id` INT(11) NOT NULL AUTO_INCREMENT,
   `user_id` INT(11) NOT NULL,
-  `customer_id` INT(11) NOT NULL,
-  `type_id` INT(11) NOT NULL,
   `customer_name` VARCHAR(100) DEFAULT NULL,
   `bottle_type` VARCHAR(50) DEFAULT NULL,
   `quantity` INT(11) NOT NULL,
@@ -97,8 +85,6 @@ CREATE TABLE IF NOT EXISTS `stock_log` (
   `log_id` INT(11) NOT NULL AUTO_INCREMENT,
   `user_id` INT(11) NOT NULL,
   `action_type` VARCHAR(50) NOT NULL,
-  `customer_id` INT(11) DEFAULT NULL,
-  `type_id` INT(11) DEFAULT NULL,
   `customer_name` VARCHAR(100) DEFAULT NULL,
   `bottle_type` VARCHAR(50) DEFAULT NULL,
   `quantity` INT(11) DEFAULT NULL,

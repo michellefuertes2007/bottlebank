@@ -61,3 +61,17 @@
 [2026-03-12 06:01:04] [127.0.0.1] ACCESS DENIED: session_user_id=9
 [2026-03-12 06:03:38] [127.0.0.1] ACCESS DENIED: session_user_id=9
 [2026-03-12 14:04:53] [127.0.0.1] LOGIN SUCCESS: user=admin id=1
+[2026-03-13 16:26:32] [127.0.0.1] LOGIN SUCCESS: user=JJ_store id=1
+[2026-03-13 17:41:05] [127.0.0.1] LOGIN SUCCESS: user=JJ_store id=1
+[2026-03-13 17:42:04] [127.0.0.1] LOGIN SUCCESS: user=tian id=2
+[2026-03-13 17:42:54] [127.0.0.1] LOGIN SUCCESS: user=tian id=2
+[2026-03-13 17:43:50] [127.0.0.1] LOGIN SUCCESS: user=JJ_store id=1
+[2026-03-13 18:00:49] [127.0.0.1] LOGIN FAILED: invalid password for user=JJ_STORE
+[2026-03-13 18:01:01] [127.0.0.1] LOGIN SUCCESS: user=JJ_store id=1
+[2026-03-14 05:05:49] [127.0.0.1] LOGIN SUCCESS: user=admin id=1
+[2026-03-14 05:35:06] [::1] LOGIN SUCCESS: user=admin id=1
+[2026-03-14 05:40:32] [::1] LOGIN SUCCESS: user=admin id=1
+[2026-03-14 05:41:29] [::1] LOGIN SUCCESS: user=admin id=1
+[2026-03-14 05:41:45] [::1] LOGIN SUCCESS: user=admin id=1
+[2026-03-14 05:43:44] [127.0.0.1] LOGIN SUCCESS: user=admin id=1
+[2026-03-14 07:48:55] [127.0.0.1] LOGIN SUCCESS: user=admin id=1
